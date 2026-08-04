@@ -78,3 +78,8 @@ Your parquet file must contain these columns:
 - `target` (integer): annotation flags (0 or 1)
 
 Only target=1 markers are displayed as vertical lines, positioned slightly above the ECG value at each annotation point.
+
+## License
+
+ParquetAnnotations is licensed under the GNU General Public License v3.0 only.
+See [LICENSE](LICENSE) for the full license text.
