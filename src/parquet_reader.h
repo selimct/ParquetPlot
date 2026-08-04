@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Furkan Selim Cetin
+
 #ifndef PARQUET_READER_H
 #define PARQUET_READER_H
 
