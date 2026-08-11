@@ -23,6 +23,11 @@
 #include <QToolBar>
 #include <QTextStream>
 #include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QList>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -314,12 +319,117 @@ void MainWindow::openFile()
 
     try
     {
-        current_data = ParquetReader::read(filename.toStdString());
+        const std::vector<std::string> column_names = ParquetReader::columnNames(filename.toStdString());
+        if (column_names.empty())
+        {
+            throw std::runtime_error("The parquet file has no columns");
+        }
+
+        QDialog column_dialog(this);
+        column_dialog.setWindowTitle("Select Parquet Columns");
+        QFormLayout *form = new QFormLayout(&column_dialog);
+        QLabel *description = new QLabel("Choose the X-axis and trigger columns, then add or remove plotted signals.");
+        description->setWordWrap(true);
+        form->addRow(description);
+
+        QComboBox *x_combo = new QComboBox(&column_dialog);
+        QComboBox *trigger_combo = new QComboBox(&column_dialog);
+
+        for (const std::string &name : column_names)
+        {
+            const QString column = QString::fromStdString(name);
+            x_combo->addItem(column);
+            trigger_combo->addItem(column);
+        }
+
+        auto preselect = [](QComboBox *combo, const QString &preferred)
+        {
+            const int index = combo->findText(preferred, Qt::MatchFixedString);
+            if (index >= 0)
+                combo->setCurrentIndex(index);
+        };
+
+        preselect(x_combo, "raw_idx");
+        preselect(trigger_combo, "target");
+
+        form->addRow("X axis:", x_combo);
+        form->addRow("Trigger:", trigger_combo);
+
+        QWidget *signals_widget = new QWidget(&column_dialog);
+        QVBoxLayout *signals_layout = new QVBoxLayout(signals_widget);
+        signals_layout->setContentsMargins(0, 0, 0, 0);
+        QList<QComboBox *> signal_combos;
+        QPushButton *add_signal_button = nullptr;
+
+        auto add_signal_row = [&](const QString &preferred)
+        {
+            QWidget *row = new QWidget(signals_widget);
+            QHBoxLayout *row_layout = new QHBoxLayout(row);
+            row_layout->setContentsMargins(0, 0, 0, 0);
+
+            QComboBox *combo = new QComboBox(row);
+            for (const std::string &name : column_names)
+                combo->addItem(QString::fromStdString(name));
+            preselect(combo, preferred);
+
+            QPushButton *remove_button = new QPushButton("Remove", row);
+            remove_button->setToolTip("Do not plot this signal");
+            row_layout->addWidget(combo, 1);
+            row_layout->addWidget(remove_button);
+            if (add_signal_button)
+                signals_layout->insertWidget(signals_layout->indexOf(add_signal_button), row);
+            else
+                signals_layout->addWidget(row);
+            signal_combos.append(combo);
+
+            connect(remove_button, &QPushButton::clicked, &column_dialog,
+                    [row, combo, &signal_combos]()
+                    {
+                        signal_combos.removeAll(combo);
+                        row->deleteLater();
+                    });
+        };
+
+        add_signal_row("ecg1_rotated");
+        add_signal_row("puls_raw");
+
+        add_signal_button = new QPushButton("Add signal", signals_widget);
+        signals_layout->addWidget(add_signal_button);
+        connect(add_signal_button, &QPushButton::clicked, &column_dialog,
+                [&add_signal_row]()
+                { add_signal_row(QString()); });
+        form->addRow("Signals:", signals_widget);
+
+        QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Open | QDialogButtonBox::Cancel,
+                                                         Qt::Horizontal, &column_dialog);
+        connect(buttons, &QDialogButtonBox::accepted, &column_dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &column_dialog, &QDialog::reject);
+        form->addRow(buttons);
+
+        if (column_dialog.exec() != QDialog::Accepted)
+            return;
+
+        x_column_name = x_combo->currentText();
+        trigger_column_name = trigger_combo->currentText();
+        signal_column_names.clear();
+        std::vector<std::string> selected_signals;
+        selected_signals.reserve(signal_combos.size());
+        for (QComboBox *combo : signal_combos)
+        {
+            signal_column_names.append(combo->currentText());
+            selected_signals.push_back(combo->currentText().toStdString());
+        }
+
+        current_data = ParquetReader::read(filename.toStdString(),
+                                           x_column_name.toStdString(),
+                                           selected_signals,
+                                           trigger_column_name.toStdString());
         setupPlot(current_data);
     }
     catch (const std::exception &e)
     {
         qWarning() << "Error reading file:" << e.what();
+        QMessageBox::critical(this, "Open Parquet File", e.what());
     }
 }
 
@@ -333,34 +443,44 @@ void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data)
     plot->clearPlottables();
     plot->clearItems();
 
-    // Calculate 95th percentile once at file load
-    std::vector<double> sorted_ecg = data->ecg1_rotated;
-    std::sort(sorted_ecg.begin(), sorted_ecg.end());
-    size_t percentile_idx = static_cast<size_t>(sorted_ecg.size() * 0.95);
-    percentile_95 = sorted_ecg[percentile_idx];
-    target_height = percentile_95 * 0.95;
+    // Place trigger impulses near the top of the first signal, when one is selected.
+    if (!data->signal_values.empty() && !data->signal_values.front().empty())
+    {
+        std::vector<double> sorted_signal = data->signal_values.front();
+        std::sort(sorted_signal.begin(), sorted_signal.end());
+        size_t percentile_idx = static_cast<size_t>(sorted_signal.size() * 0.95);
+        percentile_95 = sorted_signal[percentile_idx];
+        target_height = percentile_95 * 0.95;
+    }
+    else
+    {
+        percentile_95 = 0.0;
+        target_height = 0.0;
+    }
     target_height_spin->setValue(target_height);
 
     QVector<double> x(data->raw_idx.begin(), data->raw_idx.end());
+    const QVector<QColor> signal_colors = {
+        QColor(0, 90, 220), QColor(255, 140, 0), QColor(0, 155, 90),
+        QColor(150, 70, 190), QColor(0, 165, 190), QColor(190, 90, 40)};
 
-    QVector<double> y_ecg(data->ecg1_rotated.begin(), data->ecg1_rotated.end());
-    plot->addGraph();
-    plot->graph(0)->setData(x, y_ecg);
-    plot->graph(0)->setName("ECG1");
-    plot->graph(0)->setLineStyle(QCPGraph::lsLine);
-    plot->graph(0)->setPen(QPen(Qt::blue, 1));
-
-    QVector<double> y_pulse(data->puls_raw.begin(), data->puls_raw.end());
-    plot->addGraph();
-    plot->graph(1)->setData(x, y_pulse);
-    plot->graph(1)->setName("Pulse");
-    plot->graph(1)->setLineStyle(QCPGraph::lsLine);
-    plot->graph(1)->setPen(QPen(QColor(255, 140, 0), 1));
+    for (int i = 0; i < static_cast<int>(data->signal_values.size()); ++i)
+    {
+        const std::vector<double> &signal = data->signal_values[i];
+        QVector<double> y(signal.begin(), signal.end());
+        plot->addGraph();
+        QCPGraph *graph = plot->graph(plot->graphCount() - 1);
+        graph->setData(x, y);
+        graph->setName(signal_column_names.value(i, QString("Signal %1").arg(i + 1)));
+        graph->setLineStyle(QCPGraph::lsLine);
+        graph->setPen(QPen(signal_colors[i % signal_colors.size()], 1));
+    }
 
     updateTargetPlot();
 
     plot->rescaleAxes();
     plot->legend->setVisible(true);
+    plot->xAxis->setLabel(x_column_name);
     plot->replot();
 }
 
@@ -395,7 +515,7 @@ void MainWindow::updateTargetPlot()
 
     plot->addGraph();
     target_graph = plot->graph(plot->graphCount() - 1);
-    target_graph->setName("Target");
+    target_graph->setName(trigger_column_name);
     target_graph->setData(target_x, target_y);
     target_graph->setLineStyle(QCPGraph::lsImpulse);
     target_graph->setScatterStyle(QCPScatterStyle::ssNone);

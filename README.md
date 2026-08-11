@@ -5,8 +5,8 @@ Interactive desktop application for visualizing and annotating ECG data from par
 ## Features
 
 - **Single unified plot with:**
-  - Blue line: ECG1 (rotated) waveform
-  - Orange line: Pulse signal
+  - Any number of user-selected signal columns
+  - Distinct colors and legend labels for each signal
   - Semi-transparent red dashed lines: Target annotations (1 only)
 - **Interactive controls:**
   - Zoom: scroll wheel
@@ -61,21 +61,19 @@ make
 
 1. Click **"Open Parquet File"** button
 2. Select a `.parquet` file
-3. View the three overlaid signals:
-   - ECG1 waveform (blue)
-   - Pulse signal (orange)
-   - Target annotations (red dashed lines at flagged positions)
-4. Use mouse wheel to zoom, drag to pan
-5. Hover over any point to read coordinates
+3. Choose the X-axis and trigger columns. Add or remove any number of plotted signal columns; ECG and pulse are preselected when available.
+4. View the selected signals and target annotations (red dashed lines at flagged positions)
+5. Use mouse wheel to zoom, drag to pan
+6. Hover over any point to read coordinates
 
 ## Data Format
 
-Your parquet file must contain these columns:
+Choose any numeric columns when opening a file. These conventional names are preselected when present:
 
 - `raw_idx` (numeric): sample index
 - `ecg1_rotated` (numeric): ECG signal
 - `puls_raw` (numeric): pulse/heart rate signal
-- `target` (integer): annotation flags (0 or 1)
+- `target` (numeric or boolean): annotation flags (0 or 1)
 
 Only target=1 markers are displayed as vertical lines, positioned slightly above the ECG value at each annotation point.
 

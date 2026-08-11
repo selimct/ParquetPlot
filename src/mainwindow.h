@@ -9,6 +9,7 @@
 #include <QMap>
 #include <QPoint>
 #include <QStack>
+#include <QStringList>
 
 class QCustomPlot;
 class ParquetData;
@@ -91,6 +92,9 @@ private:
 
     QStack<ZoomState> zoom_history;
     QCPGraph *target_graph = nullptr;
+    QString x_column_name = "raw_idx";
+    QStringList signal_column_names = {"ecg1_rotated", "puls_raw"};
+    QString trigger_column_name = "target";
 
     QPoint drag_start;
     QCPItemLine *selection_rect[4];
