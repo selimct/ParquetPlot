@@ -1,4 +1,4 @@
-# ParquetAnnotations
+# ParquetPlot
 
 Interactive desktop application for visualizing and annotating ECG data from parquet files.
 
@@ -7,7 +7,7 @@ Interactive desktop application for visualizing and annotating ECG data from par
 - **Single unified plot with:**
   - Any number of user-selected signal columns
   - Distinct colors and legend labels for each signal
-  - Semi-transparent red dashed lines: Target annotations (1 only)
+  - Distinct dashed impulse lines for any number of target annotation columns
 - **Interactive controls:**
   - Zoom: scroll wheel
   - Pan: drag mouse
@@ -56,15 +56,16 @@ make
 ## Usage
 
 ```bash
-./ParquetAnnotations
+./ParquetPlot
 ```
 
 1. Click **"Open Parquet File"** button
 2. Select a `.parquet` file
-3. Choose the X-axis and trigger columns. Add or remove any number of plotted signal columns; ECG and pulse are preselected when available.
-4. View the selected signals and target annotations (red dashed lines at flagged positions)
-5. Use mouse wheel to zoom, drag to pan
-6. Hover over any point to read coordinates
+3. Choose the X-axis column. Add or remove any number of plotted signal and target columns; ECG, pulse, and target are preselected when available.
+4. View the selected signals and target annotations (dashed lines at flagged positions). Target amplitude defaults to 1500 and can be changed in the toolbar.
+5. Use **Select Columns** to reopen the column chooser for the current file without changing the current zoom or pan ranges.
+6. Use mouse wheel to zoom, drag to pan
+7. Hover over any point to read coordinates
 
 ## Data Format
 
@@ -75,9 +76,9 @@ Choose any numeric columns when opening a file. These conventional names are pre
 - `puls_raw` (numeric): pulse/heart rate signal
 - `target` (numeric or boolean): annotation flags (0 or 1)
 
-Only target=1 markers are displayed as vertical lines, positioned slightly above the ECG value at each annotation point.
+Only target=1 markers are displayed as vertical lines. All selected target columns use the threshold amplitude shown in the toolbar.
 
 ## License
 
-ParquetAnnotations is licensed under the GNU General Public License v3.0 only.
+ParquetPlot is licensed under the GNU General Public License v3.0 only.
 See [LICENSE](LICENSE) for the full license text.

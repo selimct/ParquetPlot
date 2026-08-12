@@ -5,6 +5,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QList>
 #include <memory>
 #include <QMap>
 #include <QPoint>
@@ -13,6 +14,7 @@
 
 class QCustomPlot;
 class ParquetData;
+class QLabel;
 class QPushButton;
 class QCPGraph;
 class QCPItemLine;
@@ -64,7 +66,7 @@ protected:
 
 private slots:
     void openFile();
-    void setupPlot(const std::shared_ptr<ParquetData> &data);
+    void reopenColumnDialog();
     void setBoxZoomMode();
     void setConstrainedZoomMode();
     void setAddMarkerMode();
@@ -83,18 +85,17 @@ private:
     std::shared_ptr<ParquetData> current_data;
     InteractionMode current_mode = InteractionMode::Normal;
 
-    double percentile_95 = 0.0;
-
     QMap<int, MarkerData> markers;
     int next_marker_id = 0;
     int selected_marker_id = -1;
     MarkerType current_marker_type = MarkerType::Generic;
 
     QStack<ZoomState> zoom_history;
-    QCPGraph *target_graph = nullptr;
+    QList<QCPGraph *> target_graphs;
+    QString current_file_path;
     QString x_column_name = "raw_idx";
     QStringList signal_column_names = {"ecg1_rotated", "puls_raw"};
-    QString trigger_column_name = "target";
+    QStringList trigger_column_names = {"target"};
 
     QPoint drag_start;
     QCPItemLine *selection_rect[4];
@@ -111,14 +112,19 @@ private:
     QPushButton *add_fp_marker_btn;
     QPushButton *add_fn_marker_btn;
     QPushButton *undo_btn;
+    QPushButton *select_columns_btn;
     class QDoubleSpinBox *target_height_spin;
-    double target_height = 0.0;
+    QLabel *filename_label;
+    double target_height = 1500.0;
 
     void setupUI();
     void setupToolbar();
+    void selectColumnsForFile(const QString &filename, bool preserve_view);
+    void setupPlot(const std::shared_ptr<ParquetData> &data, bool preserve_view);
     void updateModeButtons();
     void saveZoomState();
     void updateTargetPlot();
+    bool isTargetGraph(const QCPGraph *graph) const;
     void addMarkerAtCurve(QPoint pixel_pos);
     QString markerLabelText(MarkerType type, double x, double y) const;
     QString markerTypeName(MarkerType type) const;

@@ -12,7 +12,7 @@ struct ParquetData
 {
     std::vector<double> raw_idx;
     std::vector<std::vector<double>> signal_values;
-    std::vector<int> target;
+    std::vector<std::vector<int>> target_values;
 };
 
 class ParquetReader
@@ -22,7 +22,7 @@ public:
     static std::unique_ptr<ParquetData> read(const std::string &filename,
                                              const std::string &x_column,
                                              const std::vector<std::string> &signal_columns,
-                                             const std::string &trigger_column);
+                                             const std::vector<std::string> &trigger_columns);
 };
 
 #endif // PARQUET_READER_H

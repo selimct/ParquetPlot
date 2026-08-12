@@ -35,7 +35,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("Parquet ECG Viewer");
+    setWindowTitle("ParquetPlot — Signal Viewer & Annotator");
     setGeometry(100, 100, 1400, 900);
 
     for (int i = 0; i < 4; ++i)
@@ -62,6 +62,13 @@ void MainWindow::setupUI()
     QPushButton *open_btn = new QPushButton("Open Parquet File");
     connect(open_btn, &QPushButton::clicked, this, &MainWindow::openFile);
     button_layout->addWidget(open_btn);
+
+    select_columns_btn = new QPushButton("Select Columns");
+    select_columns_btn->setToolTip("Change the signals and targets plotted from the current file");
+    select_columns_btn->setEnabled(false);
+    connect(select_columns_btn, &QPushButton::clicked, this, &MainWindow::reopenColumnDialog);
+    button_layout->addWidget(select_columns_btn);
+
     button_layout->addStretch();
     main_layout->addLayout(button_layout);
 
@@ -146,17 +153,22 @@ void MainWindow::setupToolbar()
 
     toolbar->addSeparator();
 
-    toolbar->addWidget(new QLabel("Target Height:"));
+    toolbar->addWidget(new QLabel("Threshold Amplitude:"));
     target_height_spin = new QDoubleSpinBox();
     target_height_spin->setRange(-1e6, 1e6);
     target_height_spin->setSingleStep(0.1);
     target_height_spin->setDecimals(4);
-    target_height_spin->setValue(0.0);
+    target_height_spin->setValue(target_height);
     toolbar->addWidget(target_height_spin);
 
     QPushButton *apply_btn = new QPushButton("Apply");
     connect(apply_btn, &QPushButton::clicked, this, &MainWindow::applyTargetHeight);
     toolbar->addWidget(apply_btn);
+
+    toolbar->addSeparator();
+    filename_label = new QLabel("File: No file opened");
+    filename_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    toolbar->addWidget(filename_label);
 }
 
 void MainWindow::updateModeButtons()
@@ -308,7 +320,7 @@ void MainWindow::applyTargetHeight()
 
 void MainWindow::openFile()
 {
-    QSettings settings("ParquetAnnotations", "ParquetAnnotations");
+    QSettings settings;
     QString last_directory = settings.value("files/lastParquetDirectory", QDir::homePath()).toString();
 
     QString filename = QFileDialog::getOpenFileName(this, "Open Parquet File", last_directory, "Parquet Files (*.parquet)");
@@ -317,6 +329,17 @@ void MainWindow::openFile()
 
     settings.setValue("files/lastParquetDirectory", QFileInfo(filename).absolutePath());
 
+    selectColumnsForFile(filename, false);
+}
+
+void MainWindow::reopenColumnDialog()
+{
+    if (!current_file_path.isEmpty())
+        selectColumnsForFile(current_file_path, true);
+}
+
+void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_view)
+{
     try
     {
         const std::vector<std::string> column_names = ParquetReader::columnNames(filename.toStdString());
@@ -328,18 +351,16 @@ void MainWindow::openFile()
         QDialog column_dialog(this);
         column_dialog.setWindowTitle("Select Parquet Columns");
         QFormLayout *form = new QFormLayout(&column_dialog);
-        QLabel *description = new QLabel("Choose the X-axis and trigger columns, then add or remove plotted signals.");
+        QLabel *description = new QLabel("Choose the X-axis, then add or remove plotted signals and targets.");
         description->setWordWrap(true);
         form->addRow(description);
 
         QComboBox *x_combo = new QComboBox(&column_dialog);
-        QComboBox *trigger_combo = new QComboBox(&column_dialog);
 
         for (const std::string &name : column_names)
         {
             const QString column = QString::fromStdString(name);
             x_combo->addItem(column);
-            trigger_combo->addItem(column);
         }
 
         auto preselect = [](QComboBox *combo, const QString &preferred)
@@ -349,11 +370,55 @@ void MainWindow::openFile()
                 combo->setCurrentIndex(index);
         };
 
-        preselect(x_combo, "raw_idx");
-        preselect(trigger_combo, "target");
+        preselect(x_combo, preserve_view ? x_column_name : QString("raw_idx"));
 
         form->addRow("X axis:", x_combo);
-        form->addRow("Trigger:", trigger_combo);
+
+        QWidget *targets_widget = new QWidget(&column_dialog);
+        QVBoxLayout *targets_layout = new QVBoxLayout(targets_widget);
+        targets_layout->setContentsMargins(0, 0, 0, 0);
+        QList<QComboBox *> target_combos;
+        QPushButton *add_target_button = nullptr;
+
+        auto add_target_row = [&](const QString &preferred)
+        {
+            QWidget *row = new QWidget(targets_widget);
+            QHBoxLayout *row_layout = new QHBoxLayout(row);
+            row_layout->setContentsMargins(0, 0, 0, 0);
+
+            QComboBox *combo = new QComboBox(row);
+            for (const std::string &name : column_names)
+                combo->addItem(QString::fromStdString(name));
+            preselect(combo, preferred);
+
+            QPushButton *remove_button = new QPushButton("Remove", row);
+            remove_button->setToolTip("Do not plot this target");
+            row_layout->addWidget(combo, 1);
+            row_layout->addWidget(remove_button);
+            if (add_target_button)
+                targets_layout->insertWidget(targets_layout->indexOf(add_target_button), row);
+            else
+                targets_layout->addWidget(row);
+            target_combos.append(combo);
+
+            connect(remove_button, &QPushButton::clicked, &column_dialog,
+                    [row, combo, &target_combos]()
+                    {
+                        target_combos.removeAll(combo);
+                        row->deleteLater();
+                    });
+        };
+
+        const QStringList initial_targets = preserve_view ? trigger_column_names : QStringList{"target"};
+        for (const QString &target_name : initial_targets)
+            add_target_row(target_name);
+
+        add_target_button = new QPushButton("Add target", targets_widget);
+        targets_layout->addWidget(add_target_button);
+        connect(add_target_button, &QPushButton::clicked, &column_dialog,
+                [&add_target_row]()
+                { add_target_row(QString()); });
+        form->addRow("Targets:", targets_widget);
 
         QWidget *signals_widget = new QWidget(&column_dialog);
         QVBoxLayout *signals_layout = new QVBoxLayout(signals_widget);
@@ -390,8 +455,11 @@ void MainWindow::openFile()
                     });
         };
 
-        add_signal_row("ecg1_rotated");
-        add_signal_row("puls_raw");
+        const QStringList initial_signals = preserve_view
+                                                ? signal_column_names
+                                                : QStringList{"ecg1_rotated", "puls_raw"};
+        for (const QString &signal_name : initial_signals)
+            add_signal_row(signal_name);
 
         add_signal_button = new QPushButton("Add signal", signals_widget);
         signals_layout->addWidget(add_signal_button);
@@ -402,6 +470,8 @@ void MainWindow::openFile()
 
         QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Open | QDialogButtonBox::Cancel,
                                                          Qt::Horizontal, &column_dialog);
+        if (preserve_view)
+            buttons->button(QDialogButtonBox::Open)->setText("Apply");
         connect(buttons, &QDialogButtonBox::accepted, &column_dialog, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &column_dialog, &QDialog::reject);
         form->addRow(buttons);
@@ -409,55 +479,65 @@ void MainWindow::openFile()
         if (column_dialog.exec() != QDialog::Accepted)
             return;
 
-        x_column_name = x_combo->currentText();
-        trigger_column_name = trigger_combo->currentText();
-        signal_column_names.clear();
+        const QString selected_x_column = x_combo->currentText();
+        QStringList selected_target_names;
+        std::vector<std::string> selected_targets;
+        selected_targets.reserve(target_combos.size());
+        for (QComboBox *combo : target_combos)
+        {
+            selected_target_names.append(combo->currentText());
+            selected_targets.push_back(combo->currentText().toStdString());
+        }
+
+        QStringList selected_signal_names;
         std::vector<std::string> selected_signals;
         selected_signals.reserve(signal_combos.size());
         for (QComboBox *combo : signal_combos)
         {
-            signal_column_names.append(combo->currentText());
+            selected_signal_names.append(combo->currentText());
             selected_signals.push_back(combo->currentText().toStdString());
         }
 
-        current_data = ParquetReader::read(filename.toStdString(),
-                                           x_column_name.toStdString(),
-                                           selected_signals,
-                                           trigger_column_name.toStdString());
-        setupPlot(current_data);
+        std::shared_ptr<ParquetData> selected_data = ParquetReader::read(filename.toStdString(),
+                                                                         selected_x_column.toStdString(),
+                                                                         selected_signals,
+                                                                         selected_targets);
+
+        x_column_name = selected_x_column;
+        trigger_column_names = selected_target_names;
+        signal_column_names = selected_signal_names;
+        current_data = std::move(selected_data);
+        setupPlot(current_data, preserve_view);
+
+        current_file_path = filename;
+        filename_label->setText(QString("File: %1").arg(QFileInfo(filename).fileName()));
+        select_columns_btn->setEnabled(true);
     }
     catch (const std::exception &e)
     {
         qWarning() << "Error reading file:" << e.what();
-        QMessageBox::critical(this, "Open Parquet File", e.what());
+        QMessageBox::critical(this, preserve_view ? "Select Columns" : "Open Parquet File", e.what());
     }
 }
 
-void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data)
+void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data, bool preserve_view)
 {
+    ZoomState preserved_view{};
+    if (preserve_view)
+    {
+        preserved_view.x_min = plot->xAxis->range().lower;
+        preserved_view.x_max = plot->xAxis->range().upper;
+        preserved_view.y_min = plot->yAxis->range().lower;
+        preserved_view.y_max = plot->yAxis->range().upper;
+    }
+
     markers.clear();
     next_marker_id = 0;
     selected_marker_id = -1;
-    target_graph = nullptr;
+    target_graphs.clear();
 
     plot->clearPlottables();
     plot->clearItems();
-
-    // Place trigger impulses near the top of the first signal, when one is selected.
-    if (!data->signal_values.empty() && !data->signal_values.front().empty())
-    {
-        std::vector<double> sorted_signal = data->signal_values.front();
-        std::sort(sorted_signal.begin(), sorted_signal.end());
-        size_t percentile_idx = static_cast<size_t>(sorted_signal.size() * 0.95);
-        percentile_95 = sorted_signal[percentile_idx];
-        target_height = percentile_95 * 0.95;
-    }
-    else
-    {
-        percentile_95 = 0.0;
-        target_height = 0.0;
-    }
-    target_height_spin->setValue(target_height);
 
     QVector<double> x(data->raw_idx.begin(), data->raw_idx.end());
     const QVector<QColor> signal_colors = {
@@ -478,7 +558,15 @@ void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data)
 
     updateTargetPlot();
 
-    plot->rescaleAxes();
+    if (preserve_view)
+    {
+        plot->xAxis->setRange(preserved_view.x_min, preserved_view.x_max);
+        plot->yAxis->setRange(preserved_view.y_min, preserved_view.y_max);
+    }
+    else
+    {
+        plot->rescaleAxes();
+    }
     plot->legend->setVisible(true);
     plot->xAxis->setLabel(x_column_name);
     plot->replot();
@@ -486,42 +574,63 @@ void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data)
 
 void MainWindow::updateTargetPlot()
 {
-    if (target_graph)
-    {
-        plot->removePlottable(target_graph);
-        target_graph = nullptr;
-    }
-
     if (!current_data)
         return;
 
-    QVector<double> target_x;
-    QVector<double> target_y;
-    int sample_count = std::min(current_data->raw_idx.size(), current_data->target.size());
-    target_x.reserve(sample_count);
-    target_y.reserve(sample_count);
-
-    for (int i = 0; i < sample_count; ++i)
+    while (target_graphs.size() < static_cast<int>(current_data->target_values.size()))
     {
-        if (current_data->target[i] == 1)
-        {
-            target_x.append(current_data->raw_idx[i]);
-            target_y.append(target_height);
-        }
+        plot->addGraph();
+        target_graphs.append(plot->graph(plot->graphCount() - 1));
     }
 
-    if (target_x.isEmpty())
-        return;
+    while (target_graphs.size() > static_cast<int>(current_data->target_values.size()))
+    {
+        QCPGraph *graph = target_graphs.takeLast();
+        plot->removePlottable(graph);
+    }
 
-    plot->addGraph();
-    target_graph = plot->graph(plot->graphCount() - 1);
-    target_graph->setName(trigger_column_name);
-    target_graph->setData(target_x, target_y);
-    target_graph->setLineStyle(QCPGraph::lsImpulse);
-    target_graph->setScatterStyle(QCPScatterStyle::ssNone);
-    target_graph->setPen(QPen(QColor(220, 0, 0, 180), 1, Qt::DashLine));
+    const QVector<QColor> target_colors = {
+        QColor(220, 0, 0, 180), QColor(205, 60, 125, 180), QColor(145, 45, 180, 180),
+        QColor(230, 80, 20, 180), QColor(165, 20, 75, 180), QColor(120, 55, 210, 180)};
+
+    for (int target_index = 0; target_index < target_graphs.size(); ++target_index)
+    {
+        const std::vector<int> &target = current_data->target_values[target_index];
+        QVector<double> target_x;
+        QVector<double> target_y;
+        int sample_count = std::min(current_data->raw_idx.size(), target.size());
+        target_x.reserve(sample_count);
+        target_y.reserve(sample_count);
+
+        for (int i = 0; i < sample_count; ++i)
+        {
+            if (target[i] == 1)
+            {
+                target_x.append(current_data->raw_idx[i]);
+                target_y.append(target_height);
+            }
+        }
+
+        QCPGraph *graph = target_graphs[target_index];
+        graph->setName(trigger_column_names.value(target_index,
+                                                   QString("Target %1").arg(target_index + 1)));
+        graph->setData(target_x, target_y);
+        graph->setLineStyle(QCPGraph::lsImpulse);
+        graph->setScatterStyle(QCPScatterStyle::ssNone);
+        graph->setPen(QPen(target_colors[target_index % target_colors.size()], 1, Qt::DashLine));
+    }
 
     refreshFalsePositiveMarkerPositions();
+}
+
+bool MainWindow::isTargetGraph(const QCPGraph *graph) const
+{
+    for (const QCPGraph *target_graph : target_graphs)
+    {
+        if (target_graph == graph)
+            return true;
+    }
+    return false;
 }
 
 QString MainWindow::markerTypeName(MarkerType type) const
@@ -587,7 +696,7 @@ bool MainWindow::isGraphAllowedForMarker(MarkerType type, int curve_idx) const
     if (!graph)
         return false;
 
-    bool is_target_graph = graph == target_graph;
+    bool is_target_graph = isTargetGraph(graph);
     switch (type)
     {
     case MarkerType::FalsePositive:
@@ -602,20 +711,7 @@ bool MainWindow::isGraphAllowedForMarker(MarkerType type, int curve_idx) const
 
 void MainWindow::refreshFalsePositiveMarkerPositions()
 {
-    if (!target_graph)
-        return;
-
-    int target_curve = -1;
-    for (int curve = 0; curve < plot->graphCount(); ++curve)
-    {
-        if (plot->graph(curve) == target_graph)
-        {
-            target_curve = curve;
-            break;
-        }
-    }
-
-    if (target_curve == -1)
+    if (target_graphs.isEmpty())
         return;
 
     QVector<int> marker_ids;
@@ -627,6 +723,9 @@ void MainWindow::refreshFalsePositiveMarkerPositions()
 
     for (int marker_id : marker_ids)
     {
+        const int target_curve = markers[marker_id].curve_index;
+        if (!isTargetGraph(plot->graph(target_curve)))
+            continue;
         int point_idx = findNearestPointByKey(target_curve, markers[marker_id].x);
         if (point_idx != -1)
             updateMarkerPosition(marker_id, target_curve, point_idx);
@@ -1177,7 +1276,7 @@ double MainWindow::findNearestPointOnCurve(int curve_idx, QPoint pixel_pos, int 
         double y = graph->data()->at(i)->value;
         QPoint pt(plot->xAxis->coordToPixel(x), plot->yAxis->coordToPixel(y));
 
-        double dist = (graph == target_graph)
+        double dist = isTargetGraph(graph)
                           ? std::abs(pt.x() - pixel_pos.x())
                           : std::hypot(pt.x() - pixel_pos.x(), pt.y() - pixel_pos.y());
         if (dist < min_dist)

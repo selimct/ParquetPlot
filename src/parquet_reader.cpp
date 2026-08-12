@@ -235,7 +235,7 @@ std::vector<std::string> ParquetReader::columnNames(const std::string &filename)
 std::unique_ptr<ParquetData> ParquetReader::read(const std::string &filename,
                                                  const std::string &x_column,
                                                  const std::vector<std::string> &signal_columns,
-                                                 const std::string &trigger_column)
+                                                 const std::vector<std::string> &trigger_columns)
 {
     auto data = std::make_unique<ParquetData>();
     auto reader = open_reader(filename);
@@ -253,7 +253,11 @@ std::unique_ptr<ParquetData> ParquetReader::read(const std::string &filename,
     {
         data->signal_values.push_back(get_double_column(table, signal_column));
     }
-    data->target = get_int_column(table, trigger_column);
+    data->target_values.reserve(trigger_columns.size());
+    for (const std::string &trigger_column : trigger_columns)
+    {
+        data->target_values.push_back(get_int_column(table, trigger_column));
+    }
 
     if (data->raw_idx.empty())
     {

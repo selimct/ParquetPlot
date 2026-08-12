@@ -7,6 +7,9 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    QApplication::setOrganizationName("ParquetPlot");
+    QApplication::setApplicationName("ParquetPlot");
+    QApplication::setApplicationDisplayName("ParquetPlot");
 
     MainWindow window;
     window.show();
