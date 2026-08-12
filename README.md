@@ -6,7 +6,8 @@ Interactive desktop application for visualizing and annotating ECG data from par
 
 - **Single unified plot with:**
   - Any number of user-selected signal columns
-  - Distinct colors and legend labels for each signal
+  - A high-contrast, colorblind-conscious automatic color cycle with legend labels
+  - Custom colors for every signal and target plot
   - Distinct dashed impulse lines for any number of target annotation columns
 - **Interactive controls:**
   - Zoom: scroll wheel
@@ -63,9 +64,10 @@ make
 2. Select a `.parquet` file
 3. Choose the X-axis column. Add or remove any number of plotted signal and target columns; ECG, pulse, and target are preselected when available.
 4. View the selected signals and target annotations (dashed lines at flagged positions). Target amplitude defaults to 1500 and can be changed in the toolbar.
-5. Use **Select Columns** to reopen the column chooser for the current file without changing the current zoom or pan ranges.
-6. Use mouse wheel to zoom, drag to pan
-7. Hover over any point to read coordinates
+5. In the column chooser, click the color beside any signal or target to customize it. Select **Auto** to restore its palette color.
+6. Use **Select Columns** to reopen the column chooser for the current file without changing the current zoom or pan ranges.
+7. Use mouse wheel to zoom, drag to pan
+8. Hover over any point to read coordinates
 
 ## Data Format
 

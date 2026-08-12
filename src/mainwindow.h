@@ -5,6 +5,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QColor>
 #include <QList>
 #include <memory>
 #include <QMap>
@@ -96,6 +97,7 @@ private:
     QString x_column_name = "raw_idx";
     QStringList signal_column_names = {"ecg1_rotated", "puls_raw"};
     QStringList trigger_column_names = {"target"};
+    QMap<QString, QColor> custom_plot_colors;
 
     QPoint drag_start;
     QCPItemLine *selection_rect[4];
@@ -121,6 +123,9 @@ private:
     void setupToolbar();
     void selectColumnsForFile(const QString &filename, bool preserve_view);
     void setupPlot(const std::shared_ptr<ParquetData> &data, bool preserve_view);
+    QColor automaticPlotColor(int series_index) const;
+    QColor plotColor(bool target, int series_index) const;
+    QString plotColorKey(bool target, int series_index) const;
     void updateModeButtons();
     void saveZoomState();
     void updateTargetPlot();

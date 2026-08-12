@@ -24,6 +24,7 @@
 #include <QTextStream>
 #include <QDoubleSpinBox>
 #include <QComboBox>
+#include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -351,7 +352,8 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
         QDialog column_dialog(this);
         column_dialog.setWindowTitle("Select Parquet Columns");
         QFormLayout *form = new QFormLayout(&column_dialog);
-        QLabel *description = new QLabel("Choose the X-axis, then add or remove plotted signals and targets.");
+        QLabel *description = new QLabel(
+            "Choose the X-axis, then add or remove plotted signals and targets. Click a color to customize it.");
         description->setWordWrap(true);
         form->addRow(description);
 
@@ -374,10 +376,87 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
 
         form->addRow("X axis:", x_combo);
 
+        QList<QComboBox *> target_combos;
+        QList<QComboBox *> signal_combos;
+        QMap<QComboBox *, QPushButton *> color_buttons;
+        QMap<QComboBox *, QPushButton *> automatic_buttons;
+        QMap<QString, QColor> pending_colors = custom_plot_colors;
+
+        auto color_key = [](bool target, const QString &name)
+        {
+            return QString("%1/%2").arg(target ? "target" : "signal", name);
+        };
+
+        auto refresh_color = [&](bool target, QComboBox *combo)
+        {
+            QPushButton *color_button = color_buttons.value(combo);
+            QPushButton *automatic_button = automatic_buttons.value(combo);
+            if (!color_button || !automatic_button)
+                return;
+
+            const int row_index = target ? target_combos.indexOf(combo) : signal_combos.indexOf(combo);
+            const int automatic_index = (target ? signal_combos.size() : 0) + std::max(0, row_index);
+            const QString key = color_key(target, combo->currentText());
+            const bool is_custom = pending_colors.contains(key);
+            const QColor color = is_custom ? pending_colors.value(key) : automaticPlotColor(automatic_index);
+            const QString text_color = color.lightness() < 145 ? "white" : "black";
+
+            color_button->setText(color.name(QColor::HexRgb).toUpper());
+            color_button->setStyleSheet(QString("background-color: %1; color: %2;")
+                                            .arg(color.name(QColor::HexRgb), text_color));
+            color_button->setToolTip(is_custom ? "Choose a different custom color" : "Choose a custom color");
+            automatic_button->setEnabled(is_custom);
+        };
+
+        auto refresh_all_colors = [&]()
+        {
+            for (QComboBox *combo : signal_combos)
+                refresh_color(false, combo);
+            for (QComboBox *combo : target_combos)
+                refresh_color(true, combo);
+        };
+
+        auto add_color_controls = [&](bool target, QComboBox *combo, QHBoxLayout *row_layout, QWidget *row)
+        {
+            QPushButton *color_button = new QPushButton(row);
+            color_button->setMinimumWidth(90);
+            QPushButton *automatic_button = new QPushButton("Auto", row);
+            automatic_button->setToolTip("Restore the automatic high-contrast palette color");
+            color_buttons.insert(combo, color_button);
+            automatic_buttons.insert(combo, automatic_button);
+            row_layout->addWidget(color_button);
+            row_layout->addWidget(automatic_button);
+
+            connect(combo, &QComboBox::currentTextChanged, &column_dialog,
+                    [&, target, combo]()
+                    { refresh_color(target, combo); });
+            connect(color_button, &QPushButton::clicked, &column_dialog,
+                    [&, target, combo]()
+                    {
+                        const int row_index = target ? target_combos.indexOf(combo) : signal_combos.indexOf(combo);
+                        const int automatic_index = (target ? signal_combos.size() : 0) + std::max(0, row_index);
+                        const QString key = color_key(target, combo->currentText());
+                        const QColor initial = pending_colors.value(key, automaticPlotColor(automatic_index));
+                        const QColor selected = QColorDialog::getColor(initial, &column_dialog, "Choose Plot Color");
+                        if (selected.isValid())
+                        {
+                            pending_colors.insert(key, selected);
+                            refresh_color(target, combo);
+                        }
+                    });
+            connect(automatic_button, &QPushButton::clicked, &column_dialog,
+                    [&, target, combo]()
+                    {
+                        pending_colors.remove(color_key(target, combo->currentText()));
+                        refresh_color(target, combo);
+                    });
+
+            refresh_color(target, combo);
+        };
+
         QWidget *targets_widget = new QWidget(&column_dialog);
         QVBoxLayout *targets_layout = new QVBoxLayout(targets_widget);
         targets_layout->setContentsMargins(0, 0, 0, 0);
-        QList<QComboBox *> target_combos;
         QPushButton *add_target_button = nullptr;
 
         auto add_target_row = [&](const QString &preferred)
@@ -394,18 +473,21 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
             QPushButton *remove_button = new QPushButton("Remove", row);
             remove_button->setToolTip("Do not plot this target");
             row_layout->addWidget(combo, 1);
+            target_combos.append(combo);
+            add_color_controls(true, combo, row_layout, row);
             row_layout->addWidget(remove_button);
             if (add_target_button)
                 targets_layout->insertWidget(targets_layout->indexOf(add_target_button), row);
             else
                 targets_layout->addWidget(row);
-            target_combos.append(combo);
-
             connect(remove_button, &QPushButton::clicked, &column_dialog,
-                    [row, combo, &target_combos]()
+                    [&, row, combo]()
                     {
                         target_combos.removeAll(combo);
+                        color_buttons.remove(combo);
+                        automatic_buttons.remove(combo);
                         row->deleteLater();
+                        refresh_all_colors();
                     });
         };
 
@@ -423,7 +505,6 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
         QWidget *signals_widget = new QWidget(&column_dialog);
         QVBoxLayout *signals_layout = new QVBoxLayout(signals_widget);
         signals_layout->setContentsMargins(0, 0, 0, 0);
-        QList<QComboBox *> signal_combos;
         QPushButton *add_signal_button = nullptr;
 
         auto add_signal_row = [&](const QString &preferred)
@@ -440,19 +521,24 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
             QPushButton *remove_button = new QPushButton("Remove", row);
             remove_button->setToolTip("Do not plot this signal");
             row_layout->addWidget(combo, 1);
+            signal_combos.append(combo);
+            add_color_controls(false, combo, row_layout, row);
             row_layout->addWidget(remove_button);
             if (add_signal_button)
                 signals_layout->insertWidget(signals_layout->indexOf(add_signal_button), row);
             else
                 signals_layout->addWidget(row);
-            signal_combos.append(combo);
-
             connect(remove_button, &QPushButton::clicked, &column_dialog,
-                    [row, combo, &signal_combos]()
+                    [&, row, combo]()
                     {
                         signal_combos.removeAll(combo);
+                        color_buttons.remove(combo);
+                        automatic_buttons.remove(combo);
                         row->deleteLater();
+                        refresh_all_colors();
                     });
+
+            refresh_all_colors();
         };
 
         const QStringList initial_signals = preserve_view
@@ -506,6 +592,7 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
         x_column_name = selected_x_column;
         trigger_column_names = selected_target_names;
         signal_column_names = selected_signal_names;
+        custom_plot_colors = pending_colors;
         current_data = std::move(selected_data);
         setupPlot(current_data, preserve_view);
 
@@ -540,10 +627,6 @@ void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data, bool preser
     plot->clearItems();
 
     QVector<double> x(data->raw_idx.begin(), data->raw_idx.end());
-    const QVector<QColor> signal_colors = {
-        QColor(0, 90, 220), QColor(255, 140, 0), QColor(0, 155, 90),
-        QColor(150, 70, 190), QColor(0, 165, 190), QColor(190, 90, 40)};
-
     for (int i = 0; i < static_cast<int>(data->signal_values.size()); ++i)
     {
         const std::vector<double> &signal = data->signal_values[i];
@@ -553,7 +636,7 @@ void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data, bool preser
         graph->setData(x, y);
         graph->setName(signal_column_names.value(i, QString("Signal %1").arg(i + 1)));
         graph->setLineStyle(QCPGraph::lsLine);
-        graph->setPen(QPen(signal_colors[i % signal_colors.size()], 1));
+        graph->setPen(QPen(plotColor(false, i), 1));
     }
 
     updateTargetPlot();
@@ -572,6 +655,49 @@ void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data, bool preser
     plot->replot();
 }
 
+QColor MainWindow::automaticPlotColor(int series_index) const
+{
+    // A high-contrast qualitative palette based on colorblind-safe hues. The order
+    // deliberately alternates warm and cool colors so adjacent series stand apart.
+    static const QVector<QColor> palette = {
+        QColor("#0072B2"), // blue
+        QColor("#D55E00"), // vermillion
+        QColor("#009E73"), // bluish green
+        QColor("#CC3D8F"), // magenta
+        QColor("#E69F00"), // orange
+        QColor("#6F4EAD"), // violet
+        QColor("#008EAA"), // cyan
+        QColor("#A63D40"), // red
+        QColor("#5A7D00"), // olive green
+        QColor("#8C564B"), // brown
+        QColor("#4D4D4D"), // dark gray
+        QColor("#E7298A")  // pink
+    };
+
+    const int normalized_index = ((series_index % palette.size()) + palette.size()) % palette.size();
+    return palette[normalized_index];
+}
+
+QString MainWindow::plotColorKey(bool target, int series_index) const
+{
+    const QString name = target
+                             ? trigger_column_names.value(series_index, QString::number(series_index))
+                             : signal_column_names.value(series_index, QString::number(series_index));
+    return QString("%1/%2").arg(target ? "target" : "signal", name);
+}
+
+QColor MainWindow::plotColor(bool target, int series_index) const
+{
+    const QString key = plotColorKey(target, series_index);
+    if (custom_plot_colors.contains(key))
+        return custom_plot_colors.value(key);
+
+    const int signal_count = current_data
+                                 ? static_cast<int>(current_data->signal_values.size())
+                                 : signal_column_names.size();
+    return automaticPlotColor((target ? signal_count : 0) + series_index);
+}
+
 void MainWindow::updateTargetPlot()
 {
     if (!current_data)
@@ -588,10 +714,6 @@ void MainWindow::updateTargetPlot()
         QCPGraph *graph = target_graphs.takeLast();
         plot->removePlottable(graph);
     }
-
-    const QVector<QColor> target_colors = {
-        QColor(220, 0, 0, 180), QColor(205, 60, 125, 180), QColor(145, 45, 180, 180),
-        QColor(230, 80, 20, 180), QColor(165, 20, 75, 180), QColor(120, 55, 210, 180)};
 
     for (int target_index = 0; target_index < target_graphs.size(); ++target_index)
     {
@@ -617,7 +739,7 @@ void MainWindow::updateTargetPlot()
         graph->setData(target_x, target_y);
         graph->setLineStyle(QCPGraph::lsImpulse);
         graph->setScatterStyle(QCPScatterStyle::ssNone);
-        graph->setPen(QPen(target_colors[target_index % target_colors.size()], 1, Qt::DashLine));
+        graph->setPen(QPen(plotColor(true, target_index), 1, Qt::DashLine));
     }
 
     refreshFalsePositiveMarkerPositions();
