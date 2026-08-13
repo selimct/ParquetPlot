@@ -18,46 +18,64 @@ Interactive desktop application for visualizing and annotating ECG data from par
 
 ## Installation
 
-### Dependencies
+### Download a finished application
+
+Each published GitHub Release contains ready-to-run x86-64 packages:
+
+- **Linux (Fedora and Ubuntu):** download `ParquetPlot-Linux-x86_64.AppImage`,
+  make it executable, and run it:
+
+  ```bash
+  chmod +x ParquetPlot-Linux-x86_64.AppImage
+  ./ParquetPlot-Linux-x86_64.AppImage
+  ```
+
+- **Windows:** download `ParquetPlot-Windows-x64.zip`, extract the whole
+  `ParquetPlot` folder, and run `ParquetPlot.exe` from that folder.
+
+The packages include Qt, Apache Arrow/Parquet, QCustomPlot, and their required
+runtime libraries. Development packages are only needed when building from
+source.
+
+### Build from source
+
+#### Dependencies
 
 - Qt 6
 - Apache Arrow C++
 - Parquet C++
-- QCustomPlot
 
-### Ubuntu/Debian
+QCustomPlot 2.1.1 is downloaded from its official site at configure time,
+verified with SHA-512, and compiled into the application. To build offline
+against an installed Qt 6 QCustomPlot library, configure CMake with
+`-DPARQUETPLOT_USE_SYSTEM_QCUSTOMPLOT=ON`.
+
+#### Ubuntu/Debian
+
+Enable the official [Apache Arrow APT repository](https://arrow.apache.org/install/),
+then install:
 
 ```bash
-sudo apt-get install qt6-base-dev libapache-arrow-dev libparquet-dev
+sudo apt-get install qt6-base-dev libarrow-dev libparquet-dev
 ```
 
-### Fedora/RHEL
+#### Fedora/RHEL
 
 ```bash
 sudo dnf install qt6-qtbase-devel libarrow-devel parquet-libs-devel
 ```
 
-### QCustomPlot Setup (if needed)
-
-If QCustomPlot is not in your system packages:
-
-1. Download from <https://www.qcustomplot.com/>
-2. Copy `qcustomplot.h` and `qcustomplot.cpp` to `src/`
-3. Uncomment lines in CMakeLists.txt to include source files
-
-### Build
+#### Build
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
 ## Usage
 
 ```bash
-./ParquetPlot
+./build/ParquetPlot
 ```
 
 1. Click **"Open Parquet File"** button
@@ -84,3 +102,13 @@ Only target=1 markers are displayed as vertical lines. All selected target colum
 
 ParquetPlot is licensed under the GNU General Public License v3.0 only.
 See [LICENSE](LICENSE) for the full license text.
+
+Third-party notices for bundled release dependencies are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Release automation
+
+Publishing a GitHub Release triggers the release workflow. It builds and
+smoke-tests both packages, then attaches them and a `SHA256SUMS` file to that
+release. Pushes and pull requests do not run the packaging workflow. Create
+releases from tags that contain the desired application source.

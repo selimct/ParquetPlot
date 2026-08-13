@@ -74,6 +74,7 @@ private slots:
     void setAddFalsePositiveMode();
     void setAddFalseNegativeMode();
     void exportMarkers();
+    void saveEditedParquet();
     void zoomIn();
     void zoomOut();
     void fitView();

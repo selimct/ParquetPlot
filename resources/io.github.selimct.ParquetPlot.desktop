@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ParquetPlot
+Comment=Visualize and annotate signals stored in Parquet files
+Exec=ParquetPlot
+Icon=io.github.selimct.ParquetPlot
+Terminal=false
+Categories=Science;DataVisualization;
+MimeType=application/vnd.apache.parquet;

@@ -13,6 +13,7 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -22,6 +23,8 @@
 #include <QSettings>
 #include <QToolBar>
 #include <QTextStream>
+#include <QSaveFile>
+#include <QTemporaryFile>
 #include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QColorDialog>
@@ -140,6 +143,7 @@ void MainWindow::setupToolbar()
     addWindowShortcut("Toggle Add FN", QKeySequence("N"), &MainWindow::setAddFalseNegativeMode);
 
     toolbar->addAction("Export Markers", this, &MainWindow::exportMarkers);
+    toolbar->addAction("Save Edited Parquet", this, &MainWindow::saveEditedParquet);
 
     toolbar->addSeparator();
 
@@ -246,6 +250,169 @@ void MainWindow::exportMarkers()
 
     QMessageBox::information(this, "Export Markers",
                              QString("Exported markers to %1 and copied them to the clipboard.").arg(filename));
+}
+
+void MainWindow::saveEditedParquet()
+{
+    if (!current_data || current_file_path.isEmpty())
+    {
+        QMessageBox::warning(this, "Save Edited Parquet", "Open a Parquet file first.");
+        return;
+    }
+
+    if (trigger_column_names.isEmpty())
+    {
+        QMessageBox::warning(this, "Save Edited Parquet",
+                             "Select at least one target column before saving FP/FN changes.");
+        return;
+    }
+
+    bool has_false_negative = false;
+    for (auto it = markers.constBegin(); it != markers.constEnd(); ++it)
+    {
+        if (it.value().type == MarkerType::FalseNegative)
+        {
+            has_false_negative = true;
+            break;
+        }
+    }
+
+    QString false_negative_target = trigger_column_names.first();
+    if (has_false_negative && trigger_column_names.size() > 1)
+    {
+        bool accepted = false;
+        false_negative_target = QInputDialog::getItem(
+            this, "False-negative target",
+            "Apply FN markers to target column:",
+            trigger_column_names, 0, false, &accepted);
+        if (!accepted)
+            return;
+    }
+
+    std::vector<ParquetCellEdit> edits;
+    try
+    {
+        for (auto it = markers.constBegin(); it != markers.constEnd(); ++it)
+        {
+            const MarkerData &marker = it.value();
+            if (marker.type == MarkerType::Generic)
+                continue;
+
+            int64_t matching_row = -1;
+            for (int64_t row = 0; row < static_cast<int64_t>(current_data->raw_idx.size()); ++row)
+            {
+                if (current_data->raw_idx[row] != marker.x)
+                    continue;
+                if (matching_row != -1)
+                {
+                    throw std::runtime_error(
+                        QString("Marker at x=%1 is ambiguous because the X column contains that value more than once.")
+                            .arg(marker.x, 0, 'g', 16)
+                            .toStdString());
+                }
+                matching_row = row;
+            }
+
+            if (matching_row == -1)
+            {
+                throw std::runtime_error(
+                    QString("Could not map marker at x=%1 back to an original Parquet row.")
+                        .arg(marker.x, 0, 'g', 16)
+                        .toStdString());
+            }
+
+            QString target_name = false_negative_target;
+            if (marker.type == MarkerType::FalsePositive)
+            {
+                const int target_index = target_graphs.indexOf(plot->graph(marker.curve_index));
+                if (target_index < 0 || target_index >= trigger_column_names.size())
+                    throw std::runtime_error("Could not determine the target column for an FP marker.");
+                target_name = trigger_column_names[target_index];
+            }
+
+            edits.push_back({target_name.toStdString(), matching_row,
+                             marker.type == MarkerType::FalseNegative});
+        }
+
+        if (edits.empty())
+        {
+            QMessageBox::information(this, "Save Edited Parquet",
+                                     "There are no FP or FN markers to apply.");
+            return;
+        }
+
+        const QFileInfo source_info(current_file_path);
+        const QString suggested = source_info.absoluteDir().filePath(
+            source_info.completeBaseName() + "_edited.parquet");
+        QString output_filename = QFileDialog::getSaveFileName(
+            this, "Save Edited Parquet", suggested, "Parquet Files (*.parquet)");
+        if (output_filename.isEmpty())
+            return;
+        if (!output_filename.endsWith(".parquet", Qt::CaseInsensitive))
+            output_filename += ".parquet";
+
+        const QFileInfo output_info(output_filename);
+        const QString source_resolved = source_info.canonicalFilePath();
+        const QString output_resolved = output_info.exists()
+                                            ? output_info.canonicalFilePath()
+                                            : output_info.absoluteDir().canonicalPath() +
+                                                  QDir::separator() + output_info.fileName();
+        if (QDir::cleanPath(output_info.absoluteFilePath()) ==
+                QDir::cleanPath(source_info.absoluteFilePath()) ||
+            (!source_resolved.isEmpty() &&
+             QDir::cleanPath(output_resolved) == QDir::cleanPath(source_resolved)))
+        {
+            QMessageBox::warning(this, "Save Edited Parquet",
+                                 "Choose a different filename. The open source file will not be overwritten.");
+            return;
+        }
+
+        QTemporaryFile temporary(
+            QFileInfo(output_filename).absoluteDir().filePath(".parquetplot-XXXXXX.parquet"));
+        if (!temporary.open())
+            throw std::runtime_error("Could not create a temporary file beside the output file.");
+        const QString temporary_name = temporary.fileName();
+        temporary.close();
+
+        ParquetReader::writeEditedCopy(current_file_path.toStdString(),
+                                       temporary_name.toStdString(), edits);
+
+        QFile verified_file(temporary_name);
+        if (!verified_file.open(QIODevice::ReadOnly))
+            throw std::runtime_error("Could not reopen the verified temporary Parquet file.");
+
+        QSaveFile destination(output_filename);
+        if (!destination.open(QIODevice::WriteOnly))
+            throw std::runtime_error(
+                QString("Could not write to %1: %2")
+                    .arg(output_filename, destination.errorString()).toStdString());
+
+        while (!verified_file.atEnd())
+        {
+            const QByteArray block = verified_file.read(1024 * 1024);
+            if (block.isEmpty() && verified_file.error() != QFile::NoError)
+                throw std::runtime_error("Failed while reading the verified temporary Parquet file.");
+            if (destination.write(block) != block.size())
+                throw std::runtime_error("Failed while writing the destination Parquet file.");
+        }
+        verified_file.close();
+
+        if (!destination.commit())
+            throw std::runtime_error(
+                QString("Could not finalize %1: %2")
+                    .arg(output_filename, destination.errorString()).toStdString());
+
+        QMessageBox::information(
+            this, "Save Edited Parquet",
+            QString("Saved %1 FP/FN change(s) to %2 using Snappy compression.\n\n"
+                    "All columns, rows, schema metadata, and values other than the edited target cells were verified before the file was committed.")
+                .arg(edits.size())
+                .arg(output_filename));
+    }
+    catch (const std::exception &e)
+    {
+        QMessageBox::critical(this, "Save Edited Parquet", e.what());
+    }
 }
 
 void MainWindow::zoomIn()
