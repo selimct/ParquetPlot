@@ -31,6 +31,7 @@ jobs:
             ca-certificates \
             cmake \
             curl \
+            gnupg \
             libgl1-mesa-dev \
             ninja-build \
             qt6-base-dev \
@@ -102,11 +103,41 @@ jobs:
             exit 1
           fi
 
+      - name: Sign AppImage
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ -z "${RELEASE_GPG_PRIVATE_KEY:-}" ]; then
+            echo "Missing RELEASE_GPG_PRIVATE_KEY secret"
+            exit 1
+          fi
+
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+
+          printf '%s' "$RELEASE_GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
+
+          gpg_sign_args=()
+          if [ -n "${RELEASE_GPG_PASSPHRASE:-}" ]; then
+            gpg_sign_args=(--pinentry-mode loopback --passphrase "$RELEASE_GPG_PASSPHRASE")
+          fi
+
+          gpg --batch --yes "${gpg_sign_args[@]}" \
+            --armor --detach-sign \
+            --output ParquetPlot-Linux-x86_64.AppImage.asc \
+            ParquetPlot-Linux-x86_64.AppImage
+
       - name: Stage Linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-release
-          path: ParquetPlot-Linux-x86_64.AppImage
+          path: |
+            ParquetPlot-Linux-x86_64.AppImage
+            ParquetPlot-Linux-x86_64.AppImage.asc
           if-no-files-found: error
 
   windows-portable:
@@ -175,6 +206,44 @@ jobs:
             throw "ParquetPlot exited unexpectedly with code $($process.ExitCode)"
           }
           Stop-Process -Id $process.Id
+
+      - name: Sign Windows executable
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_CERTIFICATE) {
+            throw "Missing WINDOWS_SIGNING_CERTIFICATE secret"
+          }
+          if (-not $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) {
+            throw "Missing WINDOWS_SIGNING_CERTIFICATE_PASSWORD secret"
+          }
+
+          $certPath = Join-Path $env:RUNNER_TEMP "parquetplot-signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes(
+            $certPath,
+            [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE)
+          )
+
+          $signtool = (Get-Command signtool.exe -ErrorAction Stop).Source
+          & $signtool sign `
+            /fd SHA256 `
+            /td SHA256 `
+            /tr http://timestamp.digicert.com `
+            /f $certPath `
+            /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD `
+            "dist/ParquetPlot/ParquetPlot.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "signtool sign failed with exit code $LASTEXITCODE"
+          }
+
+          & $signtool verify /pa /v "dist/ParquetPlot/ParquetPlot.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "signtool verify failed with exit code $LASTEXITCODE"
+          }
+
+          Remove-Item $certPath -Force
 
       - name: Create Windows ZIP
         shell: pwsh

@@ -112,3 +112,19 @@ Publishing a GitHub Release triggers the release workflow. It builds and
 smoke-tests both packages, then attaches them and a `SHA256SUMS` file to that
 release. Pushes and pull requests do not run the packaging workflow. Create
 releases from tags that contain the desired application source.
+
+Release packaging is configured to sign both platform executables:
+
+- `ParquetPlot-Linux-x86_64.AppImage` is signed with a detached armored GPG
+  signature file (`ParquetPlot-Linux-x86_64.AppImage.asc`).
+- `ParquetPlot.exe` is Authenticode-signed before creating
+  `ParquetPlot-Windows-x64.zip`.
+
+The release workflow requires these repository secrets:
+
+- `RELEASE_GPG_PRIVATE_KEY`: Base64-encoded ASCII-armored GPG private key used
+  for AppImage signing.
+- `RELEASE_GPG_PASSPHRASE`: Passphrase for that GPG key (optional if key is not
+  passphrase-protected).
+- `WINDOWS_SIGNING_CERTIFICATE`: Base64-encoded `.pfx` Authenticode certificate.
+- `WINDOWS_SIGNING_CERTIFICATE_PASSWORD`: Password for the `.pfx` certificate.
