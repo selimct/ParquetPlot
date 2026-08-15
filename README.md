@@ -1,6 +1,6 @@
 # ParquetPlot
 
-Interactive desktop application for visualizing and annotating ECG data from parquet files.
+Linux-native and Windows-available desktop application for visualizing and annotating (ECG) data from parquet files.
 
 ## Features
 
