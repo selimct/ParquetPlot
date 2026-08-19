@@ -39,7 +39,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("ParquetPlot — Signal Viewer & Annotator");
+    setWindowTitle("ParquetPlot — Data Plotting Tool");
     setGeometry(100, 100, 1400, 900);
 
     for (int i = 0; i < 4; ++i)
@@ -103,11 +103,18 @@ void MainWindow::setupToolbar()
     box_zoom_btn->setCheckable(true);
     toolbar->addWidget(box_zoom_btn);
 
-    constrained_zoom_btn = new QPushButton("Constrained Zoom");
-    connect(constrained_zoom_btn, &QPushButton::clicked, this, &MainWindow::setConstrainedZoomMode);
-    constrained_zoom_btn->setCheckable(true);
-    constrained_zoom_btn->setToolTip("Shortcut: C");
-    toolbar->addWidget(constrained_zoom_btn);
+    x_zoom_btn = new QPushButton("X Zoom");
+    connect(x_zoom_btn, &QPushButton::clicked, this, &MainWindow::setXZoomMode);
+    x_zoom_btn->setCheckable(true);
+    // x_zoom_btn->setToolTip("Shortcut: C");
+    toolbar->addWidget(x_zoom_btn);
+
+    //
+    y_zoom_btn = new QPushButton("Y Zoom");
+    connect(y_zoom_btn, &QPushButton::clicked, this, &MainWindow::setYZoomMode);
+    y_zoom_btn->setCheckable(true);
+    toolbar->addWidget(y_zoom_btn);
+    //
 
     add_marker_btn = new QPushButton("Add Marker");
     connect(add_marker_btn, &QPushButton::clicked, this, &MainWindow::setAddMarkerMode);
@@ -137,13 +144,13 @@ void MainWindow::setupToolbar()
         addAction(action);
     };
 
-    addWindowShortcut("Toggle Constrained Zoom", QKeySequence("C"), &MainWindow::setConstrainedZoomMode);
+    // addWindowShortcut("Toggle X Zoom", QKeySequence("C"), &MainWindow::setXZoomMode);
     addWindowShortcut("Toggle Add Marker", QKeySequence("M"), &MainWindow::setAddMarkerMode);
     addWindowShortcut("Toggle Add FP", QKeySequence("P"), &MainWindow::setAddFalsePositiveMode);
     addWindowShortcut("Toggle Add FN", QKeySequence("N"), &MainWindow::setAddFalseNegativeMode);
 
     toolbar->addAction("Export Markers", this, &MainWindow::exportMarkers);
-    toolbar->addAction("Save Edited Parquet", this, &MainWindow::saveEditedParquet);
+    toolbar->addAction("Save Parquet", this, &MainWindow::saveEditedParquet);
 
     toolbar->addSeparator();
 
@@ -158,7 +165,7 @@ void MainWindow::setupToolbar()
 
     toolbar->addSeparator();
 
-    toolbar->addWidget(new QLabel("Threshold Amplitude:"));
+    toolbar->addWidget(new QLabel("Target height:"));
     target_height_spin = new QDoubleSpinBox();
     target_height_spin->setRange(-1e6, 1e6);
     target_height_spin->setSingleStep(0.1);
@@ -179,7 +186,8 @@ void MainWindow::setupToolbar()
 void MainWindow::updateModeButtons()
 {
     box_zoom_btn->setChecked(current_mode == InteractionMode::BoxZoom);
-    constrained_zoom_btn->setChecked(current_mode == InteractionMode::ConstrainedZoom);
+    x_zoom_btn->setChecked(current_mode == InteractionMode::xZoom);
+    y_zoom_btn->setChecked(current_mode == InteractionMode::yZoom);
     add_marker_btn->setChecked(current_mode == InteractionMode::AddMarker &&
                                current_marker_type == MarkerType::Generic);
     add_fp_marker_btn->setChecked(current_mode == InteractionMode::AddMarker &&
@@ -194,9 +202,15 @@ void MainWindow::setBoxZoomMode()
     updateModeButtons();
 }
 
-void MainWindow::setConstrainedZoomMode()
+void MainWindow::setXZoomMode()
 {
-    current_mode = (current_mode == InteractionMode::ConstrainedZoom) ? InteractionMode::Normal : InteractionMode::ConstrainedZoom;
+    current_mode = (current_mode == InteractionMode::xZoom) ? InteractionMode::Normal : InteractionMode::xZoom;
+    updateModeButtons();
+}
+
+void MainWindow::setYZoomMode()
+{
+    current_mode = (current_mode == InteractionMode::yZoom) ? InteractionMode::Normal : InteractionMode::yZoom;
     updateModeButtons();
 }
 
@@ -385,7 +399,8 @@ void MainWindow::saveEditedParquet()
         if (!destination.open(QIODevice::WriteOnly))
             throw std::runtime_error(
                 QString("Could not write to %1: %2")
-                    .arg(output_filename, destination.errorString()).toStdString());
+                    .arg(output_filename, destination.errorString())
+                    .toStdString());
 
         while (!verified_file.atEnd())
         {
@@ -400,7 +415,8 @@ void MainWindow::saveEditedParquet()
         if (!destination.commit())
             throw std::runtime_error(
                 QString("Could not finalize %1: %2")
-                    .arg(output_filename, destination.errorString()).toStdString());
+                    .arg(output_filename, destination.errorString())
+                    .toStdString());
 
         QMessageBox::information(
             this, "Save Edited Parquet",
@@ -710,7 +726,7 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
 
         const QStringList initial_signals = preserve_view
                                                 ? signal_column_names
-                                                : QStringList{"ecg1_rotated", "puls_raw"};
+                                                : QStringList{"ecg1_raw", "puls_raw"};
         for (const QString &signal_name : initial_signals)
             add_signal_row(signal_name);
 
@@ -902,7 +918,7 @@ void MainWindow::updateTargetPlot()
 
         QCPGraph *graph = target_graphs[target_index];
         graph->setName(trigger_column_names.value(target_index,
-                                                   QString("Target %1").arg(target_index + 1)));
+                                                  QString("Target %1").arg(target_index + 1)));
         graph->setData(target_x, target_y);
         graph->setLineStyle(QCPGraph::lsImpulse);
         graph->setScatterStyle(QCPScatterStyle::ssNone);
@@ -1126,7 +1142,12 @@ void MainWindow::handleMousePress(QMouseEvent *event)
         drag_start = event->pos();
         dragging = true;
     }
-    else if (current_mode == InteractionMode::ConstrainedZoom)
+    else if (current_mode == InteractionMode::xZoom)
+    {
+        drag_start = event->pos();
+        dragging = true;
+    }
+    else if (current_mode == InteractionMode::yZoom)
     {
         drag_start = event->pos();
         dragging = true;
@@ -1179,9 +1200,13 @@ void MainWindow::handleMouseMove(QMouseEvent *event)
     {
         showBoxSelection(event->pos());
     }
-    else if (current_mode == InteractionMode::ConstrainedZoom)
+    else if (current_mode == InteractionMode::xZoom)
     {
         showXSelection(event->pos());
+    }
+    else if (current_mode == InteractionMode::yZoom)
+    {
+        showYSelection(event->pos());
     }
 }
 
@@ -1216,7 +1241,7 @@ void MainWindow::handleMouseRelease(QMouseEvent *event)
             plot->replot();
         }
     }
-    else if (current_mode == InteractionMode::ConstrainedZoom)
+    else if (current_mode == InteractionMode::xZoom)
     {
         clearSelectionRect();
 
@@ -1227,6 +1252,21 @@ void MainWindow::handleMouseRelease(QMouseEvent *event)
         {
             saveZoomState();
             plot->xAxis->setRange(std::min(x1, x2), std::max(x1, x2));
+            updateMarkerLabelPositions();
+            plot->replot();
+        }
+    }
+    else if (current_mode == InteractionMode::yZoom)
+    {
+        clearSelectionRect();
+
+        double y1 = plot->yAxis->pixelToCoord(drag_start.y());
+        double y2 = plot->yAxis->pixelToCoord(event->pos().y());
+
+        if (std::abs(event->pos().y() - drag_start.y()) > 3 && std::abs(y2 - y1) > 0.0)
+        {
+            saveZoomState();
+            plot->yAxis->setRange(std::min(y1, y2), std::max(y1, y2));
             updateMarkerLabelPositions();
             plot->replot();
         }
@@ -1306,6 +1346,42 @@ void MainWindow::showXSelection(QPoint current_pos)
 
     plot->replot();
 }
+
+//
+
+void MainWindow::showYSelection(QPoint current_pos)
+{
+    clearSelectionRect();
+
+    double y1 = plot->yAxis->pixelToCoord(drag_start.y());
+    double y2 = plot->yAxis->pixelToCoord(current_pos.y());
+    double x1 = plot->xAxis->range().lower;
+    double x2 = plot->xAxis->range().upper;
+
+    selection_rect[0] = new QCPItemLine(plot);
+    selection_rect[0]->start->setCoords(x1, y1);
+    selection_rect[0]->end->setCoords(x2, y1);
+    selection_rect[0]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
+
+    selection_rect[1] = new QCPItemLine(plot);
+    selection_rect[1]->start->setCoords(x2, y1);
+    selection_rect[1]->end->setCoords(x2, y2);
+    selection_rect[1]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
+
+    selection_rect[2] = new QCPItemLine(plot);
+    selection_rect[2]->start->setCoords(x2, y2);
+    selection_rect[2]->end->setCoords(x1, y2);
+    selection_rect[2]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
+
+    selection_rect[3] = new QCPItemLine(plot);
+    selection_rect[3]->start->setCoords(x1, y2);
+    selection_rect[3]->end->setCoords(x1, y1);
+    selection_rect[3]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
+
+    plot->replot();
+}
+
+//
 
 void MainWindow::addMarkerAtCurve(QPoint pixel_pos)
 {

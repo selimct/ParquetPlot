@@ -26,7 +26,8 @@ enum class InteractionMode
 {
     Normal,
     BoxZoom,
-    ConstrainedZoom,
+    xZoom,
+    yZoom,
     AddMarker
 };
 
@@ -69,7 +70,8 @@ private slots:
     void openFile();
     void reopenColumnDialog();
     void setBoxZoomMode();
-    void setConstrainedZoomMode();
+    void setXZoomMode();
+    void setYZoomMode();
     void setAddMarkerMode();
     void setAddFalsePositiveMode();
     void setAddFalseNegativeMode();
@@ -96,7 +98,7 @@ private:
     QList<QCPGraph *> target_graphs;
     QString current_file_path;
     QString x_column_name = "raw_idx";
-    QStringList signal_column_names = {"ecg1_rotated", "puls_raw"};
+    QStringList signal_column_names = {"ecg1_raw", "puls_raw"};
     QStringList trigger_column_names = {"target"};
     QMap<QString, QColor> custom_plot_colors;
 
@@ -110,7 +112,8 @@ private:
     bool view_drag_active = false;
 
     QPushButton *box_zoom_btn;
-    QPushButton *constrained_zoom_btn;
+    QPushButton *x_zoom_btn;
+    QPushButton *y_zoom_btn;
     QPushButton *add_marker_btn;
     QPushButton *add_fp_marker_btn;
     QPushButton *add_fn_marker_btn;
@@ -118,7 +121,7 @@ private:
     QPushButton *select_columns_btn;
     class QDoubleSpinBox *target_height_spin;
     QLabel *filename_label;
-    double target_height = 1500.0;
+    double target_height = 2000.0;
 
     void setupUI();
     void setupToolbar();
@@ -150,6 +153,9 @@ private:
     void clearSelectionRect();
     void showBoxSelection(QPoint current_pos);
     void showXSelection(QPoint current_pos);
+    //
+    void showYSelection(QPoint current_pos);
+    //
     void handleMousePress(QMouseEvent *event);
     void handleMouseMove(QMouseEvent *event);
     void handleMouseRelease(QMouseEvent *event);
