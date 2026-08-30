@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Check out the released tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
 
@@ -103,7 +103,7 @@ jobs:
           fi
 
       - name: Stage Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-release
           path: ParquetPlot-Linux-x86_64.AppImage
@@ -114,7 +114,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Check out the released tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
 
@@ -181,7 +181,7 @@ jobs:
         run: Compress-Archive -Path dist/ParquetPlot -DestinationPath ParquetPlot-Windows-x64.zip
 
       - name: Stage Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-release
           path: ParquetPlot-Windows-x64.zip
@@ -193,7 +193,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download completed packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: release-assets
           merge-multiple: true
