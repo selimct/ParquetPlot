@@ -2,7 +2,7 @@
 Type=Application
 Name=ParquetPlot
 Comment=Visualize and annotate signals stored in Parquet files
-Exec=ParquetPlot
+Exec=ParquetPlot %f
 Icon=io.github.selimct.ParquetPlot
 Terminal=false
 Categories=Science;DataVisualization;

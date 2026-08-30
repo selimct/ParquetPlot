@@ -61,6 +61,7 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+    void openParquetFile(const QString &filename);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.apache.parquet">
+    <comment>Apache Parquet file</comment>
+    <glob pattern="*.parquet"/>
+    <magic priority="60">
+      <match type="string" value="PAR1" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>

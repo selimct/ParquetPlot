@@ -511,9 +511,19 @@ void MainWindow::openFile()
     if (filename.isEmpty())
         return;
 
-    settings.setValue("files/lastParquetDirectory", QFileInfo(filename).absolutePath());
+    openParquetFile(filename);
+}
 
-    selectColumnsForFile(filename, false);
+void MainWindow::openParquetFile(const QString &filename)
+{
+    if (filename.isEmpty())
+        return;
+
+    const QString absolute_filename = QFileInfo(filename).absoluteFilePath();
+    QSettings settings;
+    settings.setValue("files/lastParquetDirectory", QFileInfo(absolute_filename).absolutePath());
+
+    selectColumnsForFile(absolute_filename, false);
 }
 
 void MainWindow::reopenColumnDialog()

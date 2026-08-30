@@ -87,6 +87,8 @@ include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES resources/io.github.selimct.ParquetPlot.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES resources/io.github.selimct.ParquetPlot-mime.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
 install(FILES resources/io.github.selimct.ParquetPlot.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
