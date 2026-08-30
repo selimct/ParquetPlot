@@ -39,7 +39,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("ParquetPlot — Data Plotting Tool");
+    setWindowTitle("Data Plotting Tool");
     setGeometry(100, 100, 1400, 900);
 
     for (int i = 0; i < 4; ++i)

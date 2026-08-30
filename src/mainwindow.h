@@ -121,7 +121,7 @@ private:
     QPushButton *select_columns_btn;
     class QDoubleSpinBox *target_height_spin;
     QLabel *filename_label;
-    double target_height = 2000.0;
+    double target_height = 1000.0;
 
     void setupUI();
     void setupToolbar();
