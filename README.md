@@ -73,13 +73,15 @@ For an offline build, install QCustomPlot and use
 Ubuntu/Debian, after enabling the [Apache Arrow repository](https://arrow.apache.org/install/):
 
 ```bash
-sudo apt-get install qt6-base-dev libarrow-dev libparquet-dev
+sudo apt-get install qt6-base-dev libarrow-dev libparquet-dev \
+  libxkbcommon-dev libvulkan-dev libcups2-dev
 ```
 
 Fedora/RHEL:
 
 ```bash
-sudo dnf install qt6-qtbase-devel libarrow-devel parquet-libs-devel
+sudo dnf install qt6-qtbase-devel libarrow-devel parquet-libs-devel \
+  libxkbcommon-devel vulkan-headers cups-devel
 ```
 
 ```bash
@@ -171,6 +173,17 @@ To run the plot and table interaction tests:
 cmake -S . -B build -DPARQUETPLOT_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
+```
+
+Tests default to Qt's offscreen plugin, which can print harmless
+`propagateSizeHints()` warnings. Linux CI uses Xvfb with the X11 plugin to test
+window behavior without those warnings. To use the same setup locally, install
+`xvfb` and `xauth`, then run:
+
+```bash
+cmake -S . -B build -DPARQUETPLOT_BUILD_TESTS=ON -DPARQUETPLOT_TEST_PLATFORM=xcb
+cmake --build build --parallel
+xvfb-run -a ctest --test-dir build --output-on-failure
 ```
 
 ## Data Format

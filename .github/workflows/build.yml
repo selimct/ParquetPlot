@@ -31,12 +31,16 @@ jobs:
             ca-certificates \
             cmake \
             curl \
+            libcups2-dev \
             libgl1-mesa-dev \
+            libvulkan-dev \
+            libxkbcommon-dev \
             ninja-build \
             qt6-base-dev \
             qt6-base-dev-tools \
             unzip \
             wget \
+            xauth \
             xvfb
 
           wget "https://packages.apache.org/artifactory/arrow/ubuntu/apache-arrow-apt-source-latest-jammy.deb"
@@ -67,9 +71,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DDUCKDB_EXECUTABLE="$PWD/tools/duckdb" \
             -DPARQUETPLOT_BUILD_TESTS=ON \
+            -DPARQUETPLOT_TEST_PLATFORM=xcb \
             -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build --parallel 2
-          ctest --test-dir build --output-on-failure
+          xvfb-run -a ctest --test-dir build --output-on-failure
           DESTDIR="$PWD/AppDir" cmake --install build
           install -m 644 tools/duckdb-LICENSE AppDir/usr/share/doc/ParquetPlot/duckdb-LICENSE
 
@@ -170,7 +175,8 @@ jobs:
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DDUCKDB_EXECUTABLE="$PWD/tools/duckdb.exe" -DPARQUETPLOT_BUILD_TESTS=ON
+            -DDUCKDB_EXECUTABLE="$PWD/tools/duckdb.exe" -DPARQUETPLOT_BUILD_TESTS=ON \
+            -DPARQUETPLOT_TEST_PLATFORM=windows
           cmake --build build --parallel 2
           ctest --test-dir build --output-on-failure
 

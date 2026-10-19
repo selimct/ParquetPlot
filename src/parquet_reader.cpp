@@ -12,6 +12,7 @@
 #include <arrow/table.h>
 #include <arrow/type.h>
 #include <arrow/util/bit_util.h>
+#include <arrow/util/config.h>
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -32,6 +33,24 @@ static std::unique_ptr<parquet::arrow::FileReader> open_reader(const std::string
     }
 
     return std::move(reader_result).ValueOrDie();
+}
+
+static std::shared_ptr<arrow::Table> read_table(parquet::arrow::FileReader &reader,
+                                               const char *error_message)
+{
+#if ARROW_VERSION_MAJOR >= 24
+    auto result = reader.ReadTable();
+    if (!result.ok())
+        throw std::runtime_error(std::string(error_message) + result.status().ToString());
+    return std::move(result).ValueOrDie();
+#else
+    // The Result-returning overload was introduced in Arrow 24.
+    std::shared_ptr<arrow::Table> table;
+    auto status = reader.ReadTable(&table);
+    if (!status.ok())
+        throw std::runtime_error(std::string(error_message) + status.ToString());
+    return table;
+#endif
 }
 
 static std::vector<double> get_double_column(const std::shared_ptr<arrow::Table> &table, const std::string &name)
@@ -248,12 +267,7 @@ std::unique_ptr<ParquetData> ParquetReader::read(const std::string &filename,
     auto data = std::make_unique<ParquetData>();
     auto reader = open_reader(filename);
 
-    std::shared_ptr<arrow::Table> table;
-    auto status = reader->ReadTable(&table);
-    if (!status.ok())
-    {
-        throw std::runtime_error("Failed to read table: " + status.ToString());
-    }
+    auto table = read_table(*reader, "Failed to read table: ");
 
     data->raw_idx = get_double_column(table, x_column);
     data->signal_values.reserve(signal_columns.size());
@@ -389,10 +403,7 @@ void ParquetReader::writeEditedCopy(const std::string &input_filename,
     const std::shared_ptr<parquet::FileMetaData> input_metadata =
         reader->parquet_reader()->metadata();
 
-    std::shared_ptr<arrow::Table> original_table;
-    auto status = reader->ReadTable(&original_table);
-    if (!status.ok())
-        throw std::runtime_error("Failed to read the complete source table: " + status.ToString());
+    auto original_table = read_table(*reader, "Failed to read the complete source table: ");
 
     std::map<std::string, std::map<int64_t, bool>> normalized_edits;
     for (const ParquetCellEdit &edit : edits)
@@ -458,7 +469,7 @@ void ParquetReader::writeEditedCopy(const std::string &input_filename,
     for (int row_group = 0; row_group < input_metadata->num_row_groups(); ++row_group)
     {
         const int64_t row_count = input_metadata->RowGroup(row_group)->num_rows();
-        status = writer->WriteTable(*edited_table->Slice(row_offset, row_count), row_count);
+        auto status = writer->WriteTable(*edited_table->Slice(row_offset, row_count), row_count);
         if (!status.ok())
             throw std::runtime_error("Failed to write Parquet row group: " + status.ToString());
         row_offset += row_count;
@@ -466,7 +477,7 @@ void ParquetReader::writeEditedCopy(const std::string &input_filename,
     if (row_offset != edited_table->num_rows())
         throw std::runtime_error("Source row-group metadata does not cover every table row");
 
-    status = writer->Close();
+    auto status = writer->Close();
     if (!status.ok())
         throw std::runtime_error("Failed to finalize Parquet data: " + status.ToString());
     status = output->Close();
@@ -476,10 +487,7 @@ void ParquetReader::writeEditedCopy(const std::string &input_filename,
     auto verification_reader = open_reader(output_filename);
     const std::shared_ptr<parquet::FileMetaData> output_metadata =
         verification_reader->parquet_reader()->metadata();
-    std::shared_ptr<arrow::Table> verified_table;
-    status = verification_reader->ReadTable(&verified_table);
-    if (!status.ok())
-        throw std::runtime_error("Failed to verify saved Parquet table: " + status.ToString());
+    auto verified_table = read_table(*verification_reader, "Failed to verify saved Parquet table: ");
 
     if (!verified_table->schema()->Equals(*edited_table->schema(), true))
         throw std::runtime_error("Saved Parquet schema or schema metadata differs from the source");

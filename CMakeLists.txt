@@ -11,8 +11,11 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 COMPONENTS Core Gui Widgets PrintSupport REQUIRED)
-find_package(Arrow REQUIRED)
-find_package(Parquet REQUIRED)
+# Arrow probes optional CMake configs before falling back to pkg-config.
+# Keep those probes quiet; REQUIRED still reports genuinely missing dependencies.
+find_package(Arrow CONFIG REQUIRED QUIET)
+find_package(Parquet CONFIG REQUIRED QUIET)
+message(STATUS "Found Arrow ${ARROW_VERSION} and Parquet ${PARQUET_VERSION}")
 find_program(DUCKDB_EXECUTABLE duckdb)
 if(NOT DUCKDB_EXECUTABLE)
     message(FATAL_ERROR "DuckDB CLI is required for table browsing. Install duckdb or set -DDUCKDB_EXECUTABLE=/path/to/duckdb.")
@@ -113,8 +116,10 @@ if(PARQUETPLOT_BUILD_TESTS)
         Qt6::Test Qt6::Widgets Qt6::PrintSupport
         Arrow::arrow_shared Parquet::parquet_shared ${QCUSTOMPLOT_TARGET})
     add_test(NAME plot_panels COMMAND parquetplot_tests)
+    set(PARQUETPLOT_TEST_PLATFORM "offscreen" CACHE STRING
+        "Qt platform plugin for interaction tests (use xcb with xvfb-run on Linux)")
     set_tests_properties(plot_panels PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=${PARQUETPLOT_TEST_PLATFORM}"
         TIMEOUT 30)
 endif()
 

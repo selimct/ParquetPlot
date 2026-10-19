@@ -18,6 +18,7 @@
 #include <QDoubleSpinBox>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSettings>
@@ -33,6 +34,17 @@ class MainWindowTest : public QObject
 {
     Q_OBJECT
     QTemporaryDir settings_directory;
+
+    static void drag(QWidget *widget, const QPoint &start, const QPoint &end)
+    {
+        QTest::mousePress(widget, Qt::LeftButton, Qt::NoModifier, start);
+        // Qt 6.2's QWidget mouseMove uses the system cursor, which does not
+        // reliably generate move events with the offscreen platform plugin.
+        QMouseEvent move(QEvent::MouseMove, end, widget->mapToGlobal(end),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(widget, &move);
+        QTest::mouseRelease(widget, Qt::LeftButton, Qt::NoModifier, end);
+    }
 
     static void populate(MainWindow &window)
     {
@@ -273,6 +285,25 @@ private slots:
         QCOMPARE(model->data(model->index(0, 0)).toDouble(), 100.0);
     }
 
+    void parquetReadAndEditedCopy()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const std::string source = directory.filePath("source.parquet").toStdString();
+        const std::string destination = directory.filePath("edited.parquet").toStdString();
+        QVERIFY(writeTableFixture(QString::fromStdString(source)));
+
+        const auto original = ParquetReader::read(source, "sample_x", {"ECG", "Score"}, {"Trigger"});
+        ParquetReader::writeEditedCopy(source, destination,
+                                      {{"Trigger", 0, true}, {"Trigger", 1, false}});
+        const auto edited = ParquetReader::read(destination, "sample_x", {"ECG", "Score"}, {"Trigger"});
+        QVERIFY(edited->raw_idx == original->raw_idx);
+        QVERIFY(edited->signal_values == original->signal_values);
+        QVERIFY(edited->target_values[0] == std::vector<int>({1, 0, 0, 1, 0}));
+        const auto unchanged = ParquetReader::read(source, "sample_x", {"ECG", "Score"}, {"Trigger"});
+        QVERIFY(unchanged->target_values == original->target_values);
+    }
+
     void tablePagingSearchAndFilters()
     {
         QTemporaryDir directory;
@@ -388,9 +419,7 @@ private slots:
         window.current_mode = InteractionMode::BoxZoom;
         const QPoint start = window.plot->graph(1)->coordsToPixels(0.5, 0.2).toPoint();
         const QPoint end = window.plot->graph(1)->coordsToPixels(3.5, 0.7).toPoint();
-        QTest::mousePress(window.plot, Qt::LeftButton, Qt::NoModifier, start);
-        QTest::mouseMove(window.plot, end);
-        QTest::mouseRelease(window.plot, Qt::LeftButton, Qt::NoModifier, end);
+        drag(window.plot, start, end);
         QCOMPARE(window.plot->yAxis->range(), top_y);
         QVERIFY(score_axis->range().size() < bottom_y.size());
         QVERIFY(window.plot->xAxis->range().size() < 4);
@@ -401,9 +430,7 @@ private slots:
 
         window.current_mode = InteractionMode::Normal;
         const QPoint center = bottom->rect().center();
-        QTest::mousePress(window.plot, Qt::LeftButton, Qt::NoModifier, center);
-        QTest::mouseMove(window.plot, center + QPoint(40, 0));
-        QTest::mouseRelease(window.plot, Qt::LeftButton, Qt::NoModifier, center + QPoint(40, 0));
+        drag(window.plot, center, center + QPoint(40, 0));
         QVERIFY(window.plot->xAxis->range().lower < 0);
         QCOMPARE(bottom->axis(QCPAxis::atBottom)->range(), window.plot->xAxis->range());
         QCOMPARE(window.plot->yAxis->range(), top_y);
