@@ -22,16 +22,25 @@ Each published GitHub Release contains ready-to-run x86-64 packages:
   ./ParquetPlot-Linux-x86_64.AppImage
   ```
 
-- **Windows:** extract `ParquetPlot-Windows-x64.zip` and run `ParquetPlot.exe`.
+- **Windows (installed app):** download and run
+  `ParquetPlot-Windows-x64-Setup.exe`. Approve the administrator prompt to install
+  for all users in Program Files. Launch **ParquetPlot** from the Start menu or
+  Windows Search. The installer also offers a desktop shortcut. To uninstall,
+  use **Settings > Apps > Installed apps > ParquetPlot > Uninstall**. Run a newer
+  installer to update the existing installation.
+- **Windows (portable):** extract `ParquetPlot-Windows-x64.zip` and run
+  `ParquetPlot.exe`.
 
-Runtime dependencies are included in both packages.
+Runtime dependencies are included in all packages.
 
 ### Open Parquet files by double-clicking
 
 - **Linux:** integrate the AppImage, then select ParquetPlot from the file's
   **Open With** dialog. Source installs include the desktop and MIME metadata.
-- **Windows:** use **Open with > Choose another app**, select `ParquetPlot.exe`,
-  and enable **Always use this app**.
+- **Windows:** the installer registers ParquetPlot as an **Open with** option
+  for `.parquet` files. Use **Open with > Choose another app**, select
+  **ParquetPlot**, and enable **Always use this app** to make it the default.
+  For the portable version, browse to `ParquetPlot.exe` in that dialog.
 
 Files can also be opened from a terminal:
 
@@ -66,6 +75,21 @@ sudo dnf install qt6-qtbase-devel libarrow-devel parquet-libs-devel
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
+```
+
+### Build the Windows installer
+
+The release workflow bundles the Windows executable, Qt plugins, runtime DLLs,
+and dependency licenses in `dist/ParquetPlot`, then builds both the installer
+and portable ZIP. It tests installation, shortcuts, launching the installed app,
+and uninstallation before uploading the packages to the release.
+
+To compile the installer locally on Windows, prepare the same bundle and install
+[Inno Setup 6](https://jrsoftware.org/isinfo.php), then run in PowerShell from the
+repository root (adjust the version as needed):
+
+```powershell
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.0.0 "/DAppSourceDir=$PWD\dist\ParquetPlot" "/O$PWD" packaging/windows/ParquetPlot.iss
 ```
 
 ## Usage

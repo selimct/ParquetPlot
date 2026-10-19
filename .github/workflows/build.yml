@@ -109,8 +109,8 @@ jobs:
           path: ParquetPlot-Linux-x86_64.AppImage
           if-no-files-found: error
 
-  windows-portable:
-    name: Windows portable ZIP (x64)
+  windows-packages:
+    name: Windows installer and portable ZIP (x64)
     runs-on: windows-2022
     steps:
       - name: Check out the released tag
@@ -180,16 +180,34 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/ParquetPlot -DestinationPath ParquetPlot-Windows-x64.zip
 
+      - name: Create Windows installer
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          $version = $env:RELEASE_TAG -replace '^v(?=\d)', ''
+          & $compiler "/DAppVersion=$version" "/DAppSourceDir=$PWD/dist/ParquetPlot" "/O$PWD" packaging/windows/ParquetPlot.iss
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installer compilation failed with code $LASTEXITCODE"
+          }
+
+      - name: Smoke-test installation, shortcuts, launch, and uninstall
+        shell: pwsh
+        run: ./packaging/windows/test-install.ps1
+
       - name: Stage Windows artifact
         uses: actions/upload-artifact@v6
         with:
           name: windows-release
-          path: ParquetPlot-Windows-x64.zip
+          path: |
+            ParquetPlot-Windows-x64.zip
+            ParquetPlot-Windows-x64-Setup.exe
           if-no-files-found: error
 
   attach-to-release:
     name: Attach packages to GitHub Release
-    needs: [linux-appimage, windows-portable]
+    needs: [linux-appimage, windows-packages]
     runs-on: ubuntu-latest
     steps:
       - name: Download completed packages
