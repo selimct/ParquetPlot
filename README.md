@@ -6,6 +6,8 @@ Desktop application for visualizing and annotating Parquet signal data on Linux 
 
 - Plot any number of numeric signal and target columns
 - Automatic high-contrast colors with per-series customization
+- Stacked plot panels with a shared X-axis and independent Y-axis scaling
+- Per-column panel assignment, line/step/point styles, multipliers, and offsets
 - Zoom, pan, hover coordinates, and marker annotations
 - Smooth handling of files with up to 350k rows
 
@@ -71,7 +73,42 @@ cmake --build build --parallel
 1. Open or double-click a `.parquet` file.
 2. Choose the X-axis, signals, targets, and optional custom colors.
 3. Scroll to zoom, drag to pan, or hover to inspect coordinates.
-4. Use **Select Columns** to change the plot without resetting its view.
+4. Use **Select Columns** to change the plot while keeping its horizontal view.
+
+FP/FN markers, marker export, Parquet saving, and target-height controls share
+an annotation toolbar row. Click **Annotations** in the plot toolbar to collapse
+or expand it. The regular **Add Marker** tool stays in the plot toolbar.
+
+### Stacked plots
+
+In **Select Columns**, increase **Stacked panels** and assign each signal or
+target to a **Panel** (numbered from top to bottom). Add the same column more
+than once to show it in different panels or with different display settings.
+
+Each panel has its own Y label, linear or logarithmic scale, and automatic or
+fixed Y range. Set **Height weight** to give a panel more or less space relative
+to the others. Only the bottom panel shows X-axis labels; horizontal zoom and
+pan are synchronized across all panels.
+
+For signals, choose **Line**, **Step**, or **Points** and optionally transform
+displayed values with a multiplier and offset: `value × multiplier + offset`.
+For targets, **Height ×** multiplies the toolbar's target height for that column.
+These display settings do not modify the source data. Logarithmic axes display
+positive values and require positive fixed bounds.
+
+Box/Y zoom and mouse-wheel Y zoom use the panel under the pointer. The arrow
+keys pan horizontally across all panels and vertically in the last active
+panel. **Fit** restores automatic Y ranges or the configured fixed bounds;
+**Undo** restores the shared X range and all panel Y ranges. Applying column
+settings recalculates Y ranges and clears markers and zoom history.
+
+To run the plot interaction tests:
+
+```bash
+cmake -S . -B build -DPARQUETPLOT_BUILD_TESTS=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
 
 ## Data Format
 

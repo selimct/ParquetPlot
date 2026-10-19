@@ -17,11 +17,13 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QKeyEvent>
 #include <QDir>
 #include <QStringList>
 #include <QSettings>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTextStream>
 #include <QSaveFile>
 #include <QTemporaryFile>
@@ -32,6 +34,11 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QList>
+#include <QSpinBox>
+#include <QLineEdit>
+#include <QScrollArea>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -81,22 +88,39 @@ void MainWindow::setupUI()
     plot->setInteraction(QCP::iRangeZoom, true);
     plot->xAxis->setLabel("raw_idx");
     plot->yAxis->setLabel("Values");
+    panel_rects.append(plot->axisRect());
+    panel_legends.append(plot->legend);
+    active_panel = plot->axisRect();
+    panel_margin_group = new QCPMarginGroup(plot);
+    plot->setAutoAddPlottableToLegend(false);
     connect(plot->xAxis, QOverload<const QCPRange &>::of(&QCPAxis::rangeChanged),
             this, [this](const QCPRange &)
-            { updateMarkerLabelPositions(); });
+            { synchronizeXRange(plot->xAxis->range().lower, plot->xAxis->range().upper); });
     connect(plot->yAxis, QOverload<const QCPRange &>::of(&QCPAxis::rangeChanged),
             this, [this](const QCPRange &)
             { updateMarkerLabelPositions(); });
     plot->installEventFilter(this);
-    main_layout->addWidget(plot);
+    auto *plot_scroll = new QScrollArea(central);
+    plot_scroll->setWidgetResizable(true);
+    plot_scroll->setFrameShape(QFrame::NoFrame);
+    plot_scroll->setWidget(plot);
+    main_layout->addWidget(plot_scroll);
 
     central->setLayout(main_layout);
 }
 
 void MainWindow::setupToolbar()
 {
-    QToolBar *toolbar = addToolBar("Zoom");
+    QToolBar *toolbar = addToolBar("Plot Controls");
+    toolbar->setObjectName("plotToolbar");
     toolbar->setIconSize(QSize(16, 16));
+
+    addToolBarBreak(Qt::TopToolBarArea);
+    QToolBar *annotation_toolbar = addToolBar("Annotations");
+    annotation_toolbar->setObjectName("annotationToolbar");
+    annotation_toolbar->setAllowedAreas(Qt::TopToolBarArea);
+    annotation_toolbar->setMovable(false);
+    annotation_toolbar->setFloatable(false);
 
     box_zoom_btn = new QPushButton("Box Zoom");
     connect(box_zoom_btn, &QPushButton::clicked, this, &MainWindow::setBoxZoomMode);
@@ -126,13 +150,13 @@ void MainWindow::setupToolbar()
     connect(add_fp_marker_btn, &QPushButton::clicked, this, &MainWindow::setAddFalsePositiveMode);
     add_fp_marker_btn->setCheckable(true);
     add_fp_marker_btn->setToolTip("Shortcut: P");
-    toolbar->addWidget(add_fp_marker_btn);
+    annotation_toolbar->addWidget(add_fp_marker_btn);
 
     add_fn_marker_btn = new QPushButton("Add FN");
     connect(add_fn_marker_btn, &QPushButton::clicked, this, &MainWindow::setAddFalseNegativeMode);
     add_fn_marker_btn->setCheckable(true);
     add_fn_marker_btn->setToolTip("Shortcut: N");
-    toolbar->addWidget(add_fn_marker_btn);
+    annotation_toolbar->addWidget(add_fn_marker_btn);
 
     auto addWindowShortcut = [this](const QString &text, const QKeySequence &shortcut, auto slot)
     {
@@ -149,8 +173,9 @@ void MainWindow::setupToolbar()
     addWindowShortcut("Toggle Add FP", QKeySequence("P"), &MainWindow::setAddFalsePositiveMode);
     addWindowShortcut("Toggle Add FN", QKeySequence("N"), &MainWindow::setAddFalseNegativeMode);
 
-    toolbar->addAction("Export Markers", this, &MainWindow::exportMarkers);
-    toolbar->addAction("Save Parquet", this, &MainWindow::saveEditedParquet);
+    annotation_toolbar->addSeparator();
+    annotation_toolbar->addAction("Export Markers", this, &MainWindow::exportMarkers);
+    annotation_toolbar->addAction("Save Parquet", this, &MainWindow::saveEditedParquet);
 
     toolbar->addSeparator();
 
@@ -165,17 +190,31 @@ void MainWindow::setupToolbar()
 
     toolbar->addSeparator();
 
-    toolbar->addWidget(new QLabel("Target height:"));
+    annotation_toolbar->addSeparator();
+    annotation_toolbar->addWidget(new QLabel("Target height:"));
     target_height_spin = new QDoubleSpinBox();
     target_height_spin->setRange(-1e6, 1e6);
     target_height_spin->setSingleStep(0.1);
     target_height_spin->setDecimals(4);
     target_height_spin->setValue(target_height);
-    toolbar->addWidget(target_height_spin);
+    annotation_toolbar->addWidget(target_height_spin);
 
     QPushButton *apply_btn = new QPushButton("Apply");
     connect(apply_btn, &QPushButton::clicked, this, &MainWindow::applyTargetHeight);
-    toolbar->addWidget(apply_btn);
+    annotation_toolbar->addWidget(apply_btn);
+
+    QToolButton *annotation_toggle = new QToolButton(toolbar);
+    annotation_toggle->setObjectName("annotationToolbarToggle");
+    annotation_toggle->setDefaultAction(annotation_toolbar->toggleViewAction());
+    annotation_toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    annotation_toggle->setArrowType(Qt::DownArrow);
+    annotation_toolbar->toggleViewAction()->setToolTip("Show or hide the annotation toolbar");
+    connect(annotation_toolbar->toggleViewAction(), &QAction::toggled, annotation_toggle,
+            [annotation_toggle](bool visible)
+            {
+                annotation_toggle->setArrowType(visible ? Qt::DownArrow : Qt::RightArrow);
+            });
+    toolbar->addWidget(annotation_toggle);
 
     toolbar->addSeparator();
     filename_label = new QLabel("File: No file opened");
@@ -434,13 +473,9 @@ void MainWindow::saveEditedParquet()
 void MainWindow::zoomIn()
 {
     saveZoomState();
-    double x_range = plot->xAxis->range().size();
-    double y_range = plot->yAxis->range().size();
-    double x_center = plot->xAxis->range().center();
-    double y_center = plot->yAxis->range().center();
-
-    plot->xAxis->setRange(x_center - x_range * 0.4, x_center + x_range * 0.4);
-    plot->yAxis->setRange(y_center - y_range * 0.4, y_center + y_range * 0.4);
+    plot->xAxis->scaleRange(0.8);
+    for (QCPAxisRect *rect : panel_rects)
+        rect->axis(QCPAxis::atLeft)->scaleRange(0.8);
     updateMarkerLabelPositions();
     plot->replot();
 }
@@ -448,20 +483,17 @@ void MainWindow::zoomIn()
 void MainWindow::zoomOut()
 {
     saveZoomState();
-    double x_range = plot->xAxis->range().size();
-    double y_range = plot->yAxis->range().size();
-    double x_center = plot->xAxis->range().center();
-    double y_center = plot->yAxis->range().center();
-
-    plot->xAxis->setRange(x_center - x_range * 0.6, x_center + x_range * 0.6);
-    plot->yAxis->setRange(y_center - y_range * 0.6, y_center + y_range * 0.6);
+    plot->xAxis->scaleRange(1.2);
+    for (QCPAxisRect *rect : panel_rects)
+        rect->axis(QCPAxis::atLeft)->scaleRange(1.2);
     updateMarkerLabelPositions();
     plot->replot();
 }
 
 void MainWindow::fitView()
 {
-    plot->rescaleAxes();
+    saveZoomState();
+    fitPanelRanges();
     updateMarkerLabelPositions();
     plot->replot();
 }
@@ -471,8 +503,11 @@ void MainWindow::saveZoomState()
     ZoomState state;
     state.x_min = plot->xAxis->range().lower;
     state.x_max = plot->xAxis->range().upper;
-    state.y_min = plot->yAxis->range().lower;
-    state.y_max = plot->yAxis->range().upper;
+    for (QCPAxisRect *rect : panel_rects)
+    {
+        const QCPRange range = rect->axis(QCPAxis::atLeft)->range();
+        state.y_ranges.append(qMakePair(range.lower, range.upper));
+    }
     zoom_history.push(state);
     undo_btn->setEnabled(true);
 }
@@ -483,7 +518,8 @@ void MainWindow::undoZoom()
         return;
     ZoomState state = zoom_history.pop();
     plot->xAxis->setRange(state.x_min, state.x_max);
-    plot->yAxis->setRange(state.y_min, state.y_max);
+    for (int i = 0; i < panel_rects.size() && i < state.y_ranges.size(); ++i)
+        panel_rects[i]->axis(QCPAxis::atLeft)->setRange(state.y_ranges[i].first, state.y_ranges[i].second);
     updateMarkerLabelPositions();
     plot->replot();
     if (zoom_history.isEmpty())
@@ -543,14 +579,28 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
         }
 
         QDialog column_dialog(this);
-        column_dialog.setWindowTitle("Select Parquet Columns");
-        QFormLayout *form = new QFormLayout(&column_dialog);
+        column_dialog.setWindowTitle("Select Columns and Plot Panels");
+        column_dialog.resize(1100, 720);
+        QVBoxLayout *dialog_layout = new QVBoxLayout(&column_dialog);
+        QScrollArea *scroll = new QScrollArea(&column_dialog);
+        scroll->setWidgetResizable(true);
+        QWidget *contents = new QWidget(scroll);
+        scroll->setWidget(contents);
+        dialog_layout->addWidget(scroll);
+        QVBoxLayout *contents_layout = new QVBoxLayout(contents);
+        QFormLayout *form = new QFormLayout;
+        contents_layout->addLayout(form);
+        contents_layout->addStretch();
+        form->setFormAlignment(Qt::AlignTop);
         QLabel *description = new QLabel(
-            "Choose the X-axis, then add or remove plotted signals and targets. Click a color to customize it.");
+            "Panels are stacked from top to bottom and share the X-axis. Assign each column to a panel. "
+            "Signals display value × multiplier + offset; target multipliers adjust the toolbar target height. "
+            "Log axes show positive values only. Click a color to customize it.");
         description->setWordWrap(true);
         form->addRow(description);
 
         QComboBox *x_combo = new QComboBox(&column_dialog);
+        x_combo->setObjectName("xColumn");
 
         for (const std::string &name : column_names)
         {
@@ -569,11 +619,113 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
 
         form->addRow("X axis:", x_combo);
 
+        QSpinBox *panel_count = new QSpinBox(contents);
+        panel_count->setObjectName("panelCount");
+        panel_count->setRange(1, 16);
+        panel_count->setValue(preserve_view ? panel_settings.size() : 1);
+        form->addRow("Stacked panels:", panel_count);
+
+        QTableWidget *panel_table = new QTableWidget(0, 7, contents);
+        panel_table->setObjectName("panelSettings");
+        panel_table->setHorizontalHeaderLabels({"Panel", "Y label", "Scale", "Y range", "Minimum", "Maximum", "Height weight"});
+        panel_table->verticalHeader()->hide();
+        panel_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+        auto number_box = [](QWidget *parent, double value)
+        {
+            QDoubleSpinBox *box = new QDoubleSpinBox(parent);
+            box->setRange(-1e12, 1e12);
+            box->setDecimals(8);
+            box->setValue(value);
+            return box;
+        };
+        auto resize_panels = [&]()
+        {
+            const int previous = panel_table->rowCount();
+            panel_table->setRowCount(panel_count->value());
+            for (int i = previous; i < panel_count->value(); ++i)
+            {
+                const PlotPanelSettings settings = preserve_view && i < panel_settings.size()
+                                                       ? panel_settings[i] : PlotPanelSettings{};
+                auto *item = new QTableWidgetItem(QString::number(i + 1));
+                item->setFlags(Qt::ItemIsEnabled);
+                panel_table->setItem(i, 0, item);
+                panel_table->setCellWidget(i, 1, new QLineEdit(settings.label, panel_table));
+                auto *scale = new QComboBox(panel_table);
+                scale->addItems({"Linear", "Logarithmic"});
+                scale->setCurrentIndex(settings.logarithmic ? 1 : 0);
+                panel_table->setCellWidget(i, 2, scale);
+                auto *range = new QComboBox(panel_table);
+                range->addItems({"Automatic", "Fixed"});
+                range->setCurrentIndex(settings.automatic_range ? 0 : 1);
+                panel_table->setCellWidget(i, 3, range);
+                auto *minimum = number_box(panel_table, settings.minimum);
+                auto *maximum = number_box(panel_table, settings.maximum);
+                panel_table->setCellWidget(i, 4, minimum);
+                panel_table->setCellWidget(i, 5, maximum);
+                auto *height = number_box(panel_table, settings.height);
+                height->setRange(0.1, 10.0);
+                height->setDecimals(1);
+                height->setSingleStep(0.1);
+                panel_table->setCellWidget(i, 6, height);
+                minimum->setEnabled(!settings.automatic_range);
+                maximum->setEnabled(!settings.automatic_range);
+                connect(range, &QComboBox::currentIndexChanged, &column_dialog, [minimum, maximum](int index)
+                        { minimum->setEnabled(index == 1); maximum->setEnabled(index == 1); });
+            }
+            panel_table->setFixedHeight(panel_table->horizontalHeader()->height() +
+                panel_table->rowHeight(0) * std::min(6, panel_count->value()) + 2 * panel_table->frameWidth());
+        };
+        resize_panels();
+        connect(panel_count, &QSpinBox::valueChanged, &column_dialog, resize_panels);
+        form->addRow(panel_table);
+
         QList<QComboBox *> target_combos;
         QList<QComboBox *> signal_combos;
         QMap<QComboBox *, QPushButton *> color_buttons;
         QMap<QComboBox *, QPushButton *> automatic_buttons;
         QMap<QString, QColor> pending_colors = custom_plot_colors;
+        QMap<QComboBox *, QSpinBox *> series_panels;
+        QMap<QComboBox *, QComboBox *> series_styles;
+        QMap<QComboBox *, QDoubleSpinBox *> series_multipliers;
+        QMap<QComboBox *, QDoubleSpinBox *> series_offsets;
+
+        auto add_series_controls = [&](bool target, QComboBox *combo, QHBoxLayout *layout, QWidget *row)
+        {
+            const int index = (target ? target_combos : signal_combos).indexOf(combo);
+            const auto &settings_list = target ? target_settings : signal_settings;
+            const PlotSeriesSettings settings = preserve_view && index < settings_list.size()
+                                                    ? settings_list[index] : PlotSeriesSettings{};
+            auto *panel = new QSpinBox(row);
+            panel->setObjectName(target ? "targetPanel" : "signalPanel");
+            panel->setPrefix("Panel ");
+            panel->setRange(1, panel_count->value());
+            panel->setValue(settings.panel + 1);
+            series_panels.insert(combo, panel);
+            layout->addWidget(panel);
+            connect(panel_count, &QSpinBox::valueChanged, panel, [panel](int count) { panel->setMaximum(count); });
+            if (!target)
+            {
+                auto *style = new QComboBox(row);
+                style->addItems({"Line", "Step", "Points"});
+                style->setCurrentIndex(settings.style);
+                series_styles.insert(combo, style);
+                layout->addWidget(style);
+            }
+            auto *multiplier = number_box(row, settings.multiplier);
+            multiplier->setObjectName(target ? "targetMultiplier" : "signalMultiplier");
+            multiplier->setPrefix(target ? "Height × " : "× ");
+            multiplier->setToolTip(target ? "Multiply the toolbar target height for this column" : "Multiply signal values");
+            series_multipliers.insert(combo, multiplier);
+            layout->addWidget(multiplier);
+            if (!target)
+            {
+                auto *offset = number_box(row, settings.offset);
+                offset->setObjectName("signalOffset");
+                offset->setPrefix("Offset ");
+                series_offsets.insert(combo, offset);
+                layout->addWidget(offset);
+            }
+        };
 
         auto color_key = [](bool target, const QString &name)
         {
@@ -667,6 +819,7 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
             remove_button->setToolTip("Do not plot this target");
             row_layout->addWidget(combo, 1);
             target_combos.append(combo);
+            add_series_controls(true, combo, row_layout, row);
             add_color_controls(true, combo, row_layout, row);
             row_layout->addWidget(remove_button);
             if (add_target_button)
@@ -677,6 +830,10 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
                     [&, row, combo]()
                     {
                         target_combos.removeAll(combo);
+                        series_panels.remove(combo);
+                        series_styles.remove(combo);
+                        series_multipliers.remove(combo);
+                        series_offsets.remove(combo);
                         color_buttons.remove(combo);
                         automatic_buttons.remove(combo);
                         row->deleteLater();
@@ -686,7 +843,8 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
 
         const QStringList initial_targets = preserve_view ? trigger_column_names : QStringList{"target"};
         for (const QString &target_name : initial_targets)
-            add_target_row(target_name);
+            if (preserve_view || x_combo->findText(target_name) >= 0)
+                add_target_row(target_name);
 
         add_target_button = new QPushButton("Add target", targets_widget);
         targets_layout->addWidget(add_target_button);
@@ -715,6 +873,7 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
             remove_button->setToolTip("Do not plot this signal");
             row_layout->addWidget(combo, 1);
             signal_combos.append(combo);
+            add_series_controls(false, combo, row_layout, row);
             add_color_controls(false, combo, row_layout, row);
             row_layout->addWidget(remove_button);
             if (add_signal_button)
@@ -725,6 +884,10 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
                     [&, row, combo]()
                     {
                         signal_combos.removeAll(combo);
+                        series_panels.remove(combo);
+                        series_styles.remove(combo);
+                        series_multipliers.remove(combo);
+                        series_offsets.remove(combo);
                         color_buttons.remove(combo);
                         automatic_buttons.remove(combo);
                         row->deleteLater();
@@ -738,7 +901,8 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
                                                 ? signal_column_names
                                                 : QStringList{"ecg1_raw", "puls_raw"};
         for (const QString &signal_name : initial_signals)
-            add_signal_row(signal_name);
+            if (preserve_view || x_combo->findText(signal_name) >= 0)
+                add_signal_row(signal_name);
 
         add_signal_button = new QPushButton("Add signal", signals_widget);
         signals_layout->addWidget(add_signal_button);
@@ -751,9 +915,30 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
                                                          Qt::Horizontal, &column_dialog);
         if (preserve_view)
             buttons->button(QDialogButtonBox::Open)->setText("Apply");
-        connect(buttons, &QDialogButtonBox::accepted, &column_dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::accepted, &column_dialog, [&]()
+                {
+                    if (signal_combos.isEmpty() && target_combos.isEmpty())
+                    {
+                        QMessageBox::warning(&column_dialog, "Select Columns", "Add at least one signal or target.");
+                        return;
+                    }
+                    for (int i = 0; i < panel_table->rowCount(); ++i)
+                    {
+                        const bool logarithmic = static_cast<QComboBox *>(panel_table->cellWidget(i, 2))->currentIndex() == 1;
+                        const bool fixed = static_cast<QComboBox *>(panel_table->cellWidget(i, 3))->currentIndex() == 1;
+                        const double minimum = static_cast<QDoubleSpinBox *>(panel_table->cellWidget(i, 4))->value();
+                        const double maximum = static_cast<QDoubleSpinBox *>(panel_table->cellWidget(i, 5))->value();
+                        if (fixed && (!QCPRange::validRange(minimum, maximum) || minimum >= maximum || (logarithmic && minimum <= 0)))
+                        {
+                            QMessageBox::warning(&column_dialog, "Invalid Y Range",
+                                QString("Panel %1 needs a minimum below its maximum. Logarithmic ranges must be positive.").arg(i + 1));
+                            return;
+                        }
+                    }
+                    column_dialog.accept();
+                });
         connect(buttons, &QDialogButtonBox::rejected, &column_dialog, &QDialog::reject);
-        form->addRow(buttons);
+        dialog_layout->addWidget(buttons);
 
         if (column_dialog.exec() != QDialog::Accepted)
             return;
@@ -782,12 +967,43 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
                                                                          selected_signals,
                                                                          selected_targets);
 
+        QList<PlotPanelSettings> selected_panels;
+        for (int i = 0; i < panel_table->rowCount(); ++i)
+        {
+            PlotPanelSettings settings;
+            settings.label = static_cast<QLineEdit *>(panel_table->cellWidget(i, 1))->text();
+            settings.logarithmic = static_cast<QComboBox *>(panel_table->cellWidget(i, 2))->currentIndex() == 1;
+            settings.automatic_range = static_cast<QComboBox *>(panel_table->cellWidget(i, 3))->currentIndex() == 0;
+            settings.minimum = static_cast<QDoubleSpinBox *>(panel_table->cellWidget(i, 4))->value();
+            settings.maximum = static_cast<QDoubleSpinBox *>(panel_table->cellWidget(i, 5))->value();
+            settings.height = static_cast<QDoubleSpinBox *>(panel_table->cellWidget(i, 6))->value();
+            selected_panels.append(settings);
+        }
+        auto selected_series = [&](const QList<QComboBox *> &combos)
+        {
+            QList<PlotSeriesSettings> result;
+            for (QComboBox *combo : combos)
+            {
+                PlotSeriesSettings settings;
+                settings.panel = series_panels[combo]->value() - 1;
+                settings.style = series_styles.contains(combo) ? series_styles[combo]->currentIndex() : 0;
+                settings.multiplier = series_multipliers[combo]->value();
+                settings.offset = series_offsets.contains(combo) ? series_offsets[combo]->value() : 0.0;
+                result.append(settings);
+            }
+            return result;
+        };
+        signal_settings = selected_series(signal_combos);
+        target_settings = selected_series(target_combos);
+        panel_settings = selected_panels;
+
+        const bool keep_view = preserve_view && selected_x_column == x_column_name;
         x_column_name = selected_x_column;
         trigger_column_names = selected_target_names;
         signal_column_names = selected_signal_names;
         custom_plot_colors = pending_colors;
         current_data = std::move(selected_data);
-        setupPlot(current_data, preserve_view);
+        setupPlot(current_data, keep_view);
 
         current_file_path = filename;
         filename_label->setText(QString("File: %1").arg(QFileInfo(filename).fileName()));
@@ -800,51 +1016,156 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
     }
 }
 
+void MainWindow::synchronizeXRange(double lower, double upper)
+{
+    if (synchronizing_x)
+        return;
+    synchronizing_x = true;
+    for (QCPAxisRect *rect : panel_rects)
+        rect->axis(QCPAxis::atBottom)->setRange(lower, upper);
+    synchronizing_x = false;
+    updateMarkerLabelPositions();
+}
+
+QCPAxisRect *MainWindow::panelAt(QPoint position) const
+{
+    for (QCPAxisRect *rect : panel_rects)
+        if (rect->rect().contains(position))
+            return rect;
+    return nullptr;
+}
+
+QCPAxis *MainWindow::activeYAxis() const
+{
+    return active_panel ? active_panel->axis(QCPAxis::atLeft) : plot->yAxis;
+}
+
+void MainWindow::setupPanels()
+{
+    active_panel = panel_rects.first();
+    while (panel_rects.size() > 1)
+    {
+        QCPAxisRect *rect = panel_rects.takeLast();
+        panel_legends.removeLast();
+        plot->plotLayout()->remove(rect);
+    }
+    plot->plotLayout()->simplify();
+    for (int i = 0; i < panel_settings.size(); ++i)
+    {
+        if (i > 0)
+        {
+            auto *rect = new QCPAxisRect(plot);
+            plot->plotLayout()->addElement(i, 0, rect);
+            panel_rects.append(rect);
+            auto *legend = new QCPLegend;
+            rect->insetLayout()->addElement(legend, Qt::AlignTop | Qt::AlignRight);
+            panel_legends.append(legend);
+            connect(rect->axis(QCPAxis::atBottom), QOverload<const QCPRange &>::of(&QCPAxis::rangeChanged),
+                    this, [this](const QCPRange &range) { synchronizeXRange(range.lower, range.upper); });
+            connect(rect->axis(QCPAxis::atLeft), QOverload<const QCPRange &>::of(&QCPAxis::rangeChanged),
+                    this, [this](const QCPRange &) { updateMarkerLabelPositions(); });
+        }
+        QCPAxisRect *rect = panel_rects[i];
+        const PlotPanelSettings &settings = panel_settings[i];
+        rect->setMarginGroup(QCP::msLeft | QCP::msRight, panel_margin_group);
+        rect->setMinimumSize(0, 130);
+        rect->setRangeZoomAxes(rect->axis(QCPAxis::atBottom), rect->axis(QCPAxis::atLeft));
+        QCPAxis *x_axis = rect->axis(QCPAxis::atBottom);
+        x_axis->setTickLabels(i == panel_settings.size() - 1);
+        x_axis->setLabel(i == panel_settings.size() - 1 ? x_column_name : QString());
+        QCPAxis *y_axis = rect->axis(QCPAxis::atLeft);
+        y_axis->setLabel(settings.label);
+        y_axis->setScaleType(settings.logarithmic ? QCPAxis::stLogarithmic : QCPAxis::stLinear);
+        if (settings.logarithmic)
+            y_axis->setTicker(QSharedPointer<QCPAxisTickerLog>::create());
+        else
+            y_axis->setTicker(QSharedPointer<QCPAxisTicker>::create());
+        y_axis->setRange(settings.logarithmic ? 0.1 : 0.0, settings.logarithmic ? 10.0 : 1.0);
+        panel_legends[i]->setVisible(false);
+        panel_legends[i]->setFont(QFont(font().family(), 9));
+        panel_legends[i]->setBorderPen(QPen(Qt::black));
+        panel_legends[i]->setBrush(QBrush(Qt::white));
+        plot->plotLayout()->setRowStretchFactor(i, settings.height);
+    }
+    plot->setMinimumHeight(std::max(300, 180 * static_cast<int>(panel_settings.size())));
+}
+
+void MainWindow::fitPanelRanges()
+{
+    if (current_data)
+    {
+        double lower = std::numeric_limits<double>::infinity();
+        double upper = -std::numeric_limits<double>::infinity();
+        for (double x : current_data->raw_idx)
+        {
+            if (std::isfinite(x))
+            {
+                lower = std::min(lower, x);
+                upper = std::max(upper, x);
+            }
+        }
+        if (lower == upper && std::isfinite(lower))
+        {
+            const double padding = std::max(0.5, std::abs(lower) * 0.01);
+            lower -= padding;
+            upper += padding;
+        }
+        if (QCPRange::validRange(lower, upper))
+            synchronizeXRange(lower, upper);
+    }
+    for (int i = 0; i < panel_rects.size(); ++i)
+    {
+        QCPAxis *axis = panel_rects[i]->axis(QCPAxis::atLeft);
+        const PlotPanelSettings &settings = panel_settings[i];
+        if (settings.automatic_range)
+            axis->rescale();
+        else
+            axis->setRange(settings.minimum, settings.maximum);
+    }
+}
+
 void MainWindow::setupPlot(const std::shared_ptr<ParquetData> &data, bool preserve_view)
 {
-    ZoomState preserved_view{};
-    if (preserve_view)
-    {
-        preserved_view.x_min = plot->xAxis->range().lower;
-        preserved_view.x_max = plot->xAxis->range().upper;
-        preserved_view.y_min = plot->yAxis->range().lower;
-        preserved_view.y_max = plot->yAxis->range().upper;
-    }
-
+    const QCPRange previous_x = plot->xAxis->range();
     markers.clear();
     next_marker_id = 0;
     selected_marker_id = -1;
     target_graphs.clear();
-
+    dragging = false;
+    view_dragging = false;
+    view_drag_active = false;
+    clearSelectionRect();
     plot->clearPlottables();
     plot->clearItems();
+    zoom_history.clear();
+    undo_btn->setEnabled(false);
+    setupPanels();
 
     QVector<double> x(data->raw_idx.begin(), data->raw_idx.end());
     for (int i = 0; i < static_cast<int>(data->signal_values.size()); ++i)
     {
+        const PlotSeriesSettings settings = signal_settings.value(i);
+        const int panel = std::clamp(settings.panel, 0, static_cast<int>(panel_rects.size()) - 1);
         const std::vector<double> &signal = data->signal_values[i];
-        QVector<double> y(signal.begin(), signal.end());
-        plot->addGraph();
-        QCPGraph *graph = plot->graph(plot->graphCount() - 1);
+        QVector<double> y;
+        y.reserve(signal.size());
+        for (double value : signal)
+            y.append(value * settings.multiplier + settings.offset);
+        QCPGraph *graph = plot->addGraph(panel_rects[panel]->axis(QCPAxis::atBottom),
+                                        panel_rects[panel]->axis(QCPAxis::atLeft));
         graph->setData(x, y);
         graph->setName(signal_column_names.value(i, QString("Signal %1").arg(i + 1)));
-        graph->setLineStyle(QCPGraph::lsLine);
+        graph->setLineStyle(settings.style == 2 ? QCPGraph::lsNone :
+                            settings.style == 1 ? QCPGraph::lsStepLeft : QCPGraph::lsLine);
+        graph->setScatterStyle(settings.style == 2 ? QCPScatterStyle(QCPScatterStyle::ssDisc, 4) : QCPScatterStyle());
         graph->setPen(QPen(plotColor(false, i), 1));
+        graph->addToLegend(panel_legends[panel]);
+        panel_legends[panel]->setVisible(true);
     }
-
     updateTargetPlot();
-
+    fitPanelRanges();
     if (preserve_view)
-    {
-        plot->xAxis->setRange(preserved_view.x_min, preserved_view.x_max);
-        plot->yAxis->setRange(preserved_view.y_min, preserved_view.y_max);
-    }
-    else
-    {
-        plot->rescaleAxes();
-    }
-    plot->legend->setVisible(true);
-    plot->xAxis->setLabel(x_column_name);
+        synchronizeXRange(previous_x.lower, previous_x.upper);
     plot->replot();
 }
 
@@ -898,8 +1219,13 @@ void MainWindow::updateTargetPlot()
 
     while (target_graphs.size() < static_cast<int>(current_data->target_values.size()))
     {
-        plot->addGraph();
-        target_graphs.append(plot->graph(plot->graphCount() - 1));
+        const int index = target_graphs.size();
+        const int panel = std::clamp(target_settings.value(index).panel, 0, static_cast<int>(panel_rects.size()) - 1);
+        QCPGraph *graph = plot->addGraph(panel_rects[panel]->axis(QCPAxis::atBottom),
+                                        panel_rects[panel]->axis(QCPAxis::atLeft));
+        target_graphs.append(graph);
+        graph->addToLegend(panel_legends[panel]);
+        panel_legends[panel]->setVisible(true);
     }
 
     while (target_graphs.size() > static_cast<int>(current_data->target_values.size()))
@@ -922,7 +1248,7 @@ void MainWindow::updateTargetPlot()
             if (target[i] == 1)
             {
                 target_x.append(current_data->raw_idx[i]);
-                target_y.append(target_height);
+                target_y.append(target_height * target_settings.value(target_index).multiplier);
             }
         }
 
@@ -1051,7 +1377,16 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == plot)
     {
-        if (event->type() == QEvent::MouseButtonPress)
+        if (event->type() == QEvent::Wheel)
+        {
+            auto *wheel = static_cast<QWheelEvent *>(event);
+            if (QCPAxisRect *rect = panelAt(wheel->position().toPoint()))
+            {
+                active_panel = rect;
+                saveZoomState();
+            }
+        }
+        else if (event->type() == QEvent::MouseButtonPress)
         {
             handleMousePress(static_cast<QMouseEvent *>(event));
             return true;
@@ -1106,19 +1441,17 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     }
         return;
     case Qt::Key_Up:
-    {
-        double range = plot->yAxis->range().size();
-        plot->yAxis->setRange(plot->yAxis->range().lower + range * pan_factor,
-                              plot->yAxis->range().upper + range * pan_factor);
-        updateMarkerLabelPositions();
-        plot->replot();
-    }
-        return;
     case Qt::Key_Down:
     {
-        double range = plot->yAxis->range().size();
-        plot->yAxis->setRange(plot->yAxis->range().lower - range * pan_factor,
-                              plot->yAxis->range().upper - range * pan_factor);
+        QCPAxis *axis = activeYAxis();
+        const bool up = event->key() == Qt::Key_Up;
+        if (axis->scaleType() == QCPAxis::stLogarithmic)
+        {
+            const double factor = std::pow(axis->range().upper / axis->range().lower, pan_factor);
+            axis->moveRange(up ? factor : 1.0 / factor);
+        }
+        else
+            axis->moveRange(axis->range().size() * (up ? pan_factor : -pan_factor));
         updateMarkerLabelPositions();
         plot->replot();
     }
@@ -1146,6 +1479,13 @@ void MainWindow::handleMousePress(QMouseEvent *event)
         clearSelectionRect();
         return;
     }
+
+    if (event->button() != Qt::LeftButton)
+        return;
+    QCPAxisRect *clicked_panel = panelAt(event->pos());
+    if (!clicked_panel)
+        return;
+    active_panel = clicked_panel;
 
     if (current_mode == InteractionMode::BoxZoom)
     {
@@ -1233,20 +1573,24 @@ void MainWindow::handleMouseRelease(QMouseEvent *event)
         return;
     dragging = false;
 
+    const QRect bounds = active_panel->rect();
+    const QPoint end(std::clamp(event->pos().x(), bounds.left(), bounds.right()),
+                     std::clamp(event->pos().y(), bounds.top(), bounds.bottom()));
+    QCPAxis *y_axis = activeYAxis();
     if (current_mode == InteractionMode::BoxZoom)
     {
         clearSelectionRect();
 
         double x1 = plot->xAxis->pixelToCoord(drag_start.x());
-        double y1 = plot->yAxis->pixelToCoord(drag_start.y());
-        double x2 = plot->xAxis->pixelToCoord(event->pos().x());
-        double y2 = plot->yAxis->pixelToCoord(event->pos().y());
+        double y1 = y_axis->pixelToCoord(drag_start.y());
+        double x2 = plot->xAxis->pixelToCoord(end.x());
+        double y2 = y_axis->pixelToCoord(end.y());
 
-        if (std::abs(x2 - x1) > 1 && std::abs(y2 - y1) > 1)
+        if (std::abs(end.x() - drag_start.x()) > 3 && std::abs(end.y() - drag_start.y()) > 3)
         {
             saveZoomState();
             plot->xAxis->setRange(std::min(x1, x2), std::max(x1, x2));
-            plot->yAxis->setRange(std::min(y1, y2), std::max(y1, y2));
+            y_axis->setRange(std::min(y1, y2), std::max(y1, y2));
             updateMarkerLabelPositions();
             plot->replot();
         }
@@ -1256,9 +1600,9 @@ void MainWindow::handleMouseRelease(QMouseEvent *event)
         clearSelectionRect();
 
         double x1 = plot->xAxis->pixelToCoord(drag_start.x());
-        double x2 = plot->xAxis->pixelToCoord(event->pos().x());
+        double x2 = plot->xAxis->pixelToCoord(end.x());
 
-        if (std::abs(event->pos().x() - drag_start.x()) > 3 && std::abs(x2 - x1) > 0.0)
+        if (std::abs(end.x() - drag_start.x()) > 3 && std::abs(x2 - x1) > 0.0)
         {
             saveZoomState();
             plot->xAxis->setRange(std::min(x1, x2), std::max(x1, x2));
@@ -1270,13 +1614,13 @@ void MainWindow::handleMouseRelease(QMouseEvent *event)
     {
         clearSelectionRect();
 
-        double y1 = plot->yAxis->pixelToCoord(drag_start.y());
-        double y2 = plot->yAxis->pixelToCoord(event->pos().y());
+        double y1 = y_axis->pixelToCoord(drag_start.y());
+        double y2 = y_axis->pixelToCoord(end.y());
 
-        if (std::abs(event->pos().y() - drag_start.y()) > 3 && std::abs(y2 - y1) > 0.0)
+        if (std::abs(end.y() - drag_start.y()) > 3 && std::abs(y2 - y1) > 0.0)
         {
             saveZoomState();
-            plot->yAxis->setRange(std::min(y1, y2), std::max(y1, y2));
+            y_axis->setRange(std::min(y1, y2), std::max(y1, y2));
             updateMarkerLabelPositions();
             plot->replot();
         }
@@ -1295,103 +1639,44 @@ void MainWindow::clearSelectionRect()
     }
 }
 
-void MainWindow::showBoxSelection(QPoint current_pos)
+void MainWindow::showSelection(QPoint current_pos, bool full_x, bool full_y)
 {
     clearSelectionRect();
-
-    int x1 = drag_start.x(), y1 = drag_start.y();
-    int x2 = current_pos.x(), y2 = current_pos.y();
-
-    selection_rect[0] = new QCPItemLine(plot);
-    selection_rect[0]->start->setCoords(plot->xAxis->pixelToCoord(x1), plot->yAxis->pixelToCoord(y1));
-    selection_rect[0]->end->setCoords(plot->xAxis->pixelToCoord(x2), plot->yAxis->pixelToCoord(y1));
-    selection_rect[0]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[1] = new QCPItemLine(plot);
-    selection_rect[1]->start->setCoords(plot->xAxis->pixelToCoord(x2), plot->yAxis->pixelToCoord(y1));
-    selection_rect[1]->end->setCoords(plot->xAxis->pixelToCoord(x2), plot->yAxis->pixelToCoord(y2));
-    selection_rect[1]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[2] = new QCPItemLine(plot);
-    selection_rect[2]->start->setCoords(plot->xAxis->pixelToCoord(x2), plot->yAxis->pixelToCoord(y2));
-    selection_rect[2]->end->setCoords(plot->xAxis->pixelToCoord(x1), plot->yAxis->pixelToCoord(y2));
-    selection_rect[2]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[3] = new QCPItemLine(plot);
-    selection_rect[3]->start->setCoords(plot->xAxis->pixelToCoord(x1), plot->yAxis->pixelToCoord(y2));
-    selection_rect[3]->end->setCoords(plot->xAxis->pixelToCoord(x1), plot->yAxis->pixelToCoord(y1));
-    selection_rect[3]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
+    if (!active_panel)
+        return;
+    const QRect bounds = active_panel->rect();
+    const int x1 = full_x ? bounds.left() : drag_start.x();
+    const int x2 = full_x ? bounds.right() : std::clamp(current_pos.x(), bounds.left(), bounds.right());
+    const int y1 = full_y ? bounds.top() : drag_start.y();
+    const int y2 = full_y ? bounds.bottom() : std::clamp(current_pos.y(), bounds.top(), bounds.bottom());
+    const QPoint corners[] = {QPoint(x1, y1), QPoint(x2, y1), QPoint(x2, y2), QPoint(x1, y2)};
+    for (int i = 0; i < 4; ++i)
+    {
+        selection_rect[i] = new QCPItemLine(plot);
+        selection_rect[i]->setClipAxisRect(active_panel);
+        selection_rect[i]->start->setType(QCPItemPosition::ptAbsolute);
+        selection_rect[i]->end->setType(QCPItemPosition::ptAbsolute);
+        selection_rect[i]->start->setCoords(corners[i]);
+        selection_rect[i]->end->setCoords(corners[(i + 1) % 4]);
+        selection_rect[i]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
+    }
     plot->replot();
+}
+
+void MainWindow::showBoxSelection(QPoint current_pos)
+{
+    showSelection(current_pos, false, false);
 }
 
 void MainWindow::showXSelection(QPoint current_pos)
 {
-    clearSelectionRect();
-
-    double x1 = plot->xAxis->pixelToCoord(drag_start.x());
-    double x2 = plot->xAxis->pixelToCoord(current_pos.x());
-    double y1 = plot->yAxis->range().lower;
-    double y2 = plot->yAxis->range().upper;
-
-    selection_rect[0] = new QCPItemLine(plot);
-    selection_rect[0]->start->setCoords(x1, y1);
-    selection_rect[0]->end->setCoords(x2, y1);
-    selection_rect[0]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[1] = new QCPItemLine(plot);
-    selection_rect[1]->start->setCoords(x2, y1);
-    selection_rect[1]->end->setCoords(x2, y2);
-    selection_rect[1]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[2] = new QCPItemLine(plot);
-    selection_rect[2]->start->setCoords(x2, y2);
-    selection_rect[2]->end->setCoords(x1, y2);
-    selection_rect[2]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[3] = new QCPItemLine(plot);
-    selection_rect[3]->start->setCoords(x1, y2);
-    selection_rect[3]->end->setCoords(x1, y1);
-    selection_rect[3]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    plot->replot();
+    showSelection(current_pos, false, true);
 }
-
-//
 
 void MainWindow::showYSelection(QPoint current_pos)
 {
-    clearSelectionRect();
-
-    double y1 = plot->yAxis->pixelToCoord(drag_start.y());
-    double y2 = plot->yAxis->pixelToCoord(current_pos.y());
-    double x1 = plot->xAxis->range().lower;
-    double x2 = plot->xAxis->range().upper;
-
-    selection_rect[0] = new QCPItemLine(plot);
-    selection_rect[0]->start->setCoords(x1, y1);
-    selection_rect[0]->end->setCoords(x2, y1);
-    selection_rect[0]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[1] = new QCPItemLine(plot);
-    selection_rect[1]->start->setCoords(x2, y1);
-    selection_rect[1]->end->setCoords(x2, y2);
-    selection_rect[1]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[2] = new QCPItemLine(plot);
-    selection_rect[2]->start->setCoords(x2, y2);
-    selection_rect[2]->end->setCoords(x1, y2);
-    selection_rect[2]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    selection_rect[3] = new QCPItemLine(plot);
-    selection_rect[3]->start->setCoords(x1, y2);
-    selection_rect[3]->end->setCoords(x1, y1);
-    selection_rect[3]->setPen(QPen(Qt::gray, 1, Qt::DashLine));
-
-    plot->replot();
+    showSelection(current_pos, true, false);
 }
-
-//
 
 void MainWindow::addMarkerAtCurve(QPoint pixel_pos)
 {
@@ -1427,6 +1712,7 @@ void MainWindow::addMarkerAtCurve(QPoint pixel_pos)
     QColor color = markerTypeColor(current_marker_type);
 
     QCPItemTracer *point = new QCPItemTracer(plot);
+    point->setClipAxisRect(graph->keyAxis()->axisRect());
     point->setGraph(graph);
     point->setGraphKey(x);
     point->setInterpolating(false);
@@ -1469,7 +1755,10 @@ int MainWindow::findMarkerAt(QPoint pixel_pos) const
     for (auto it = markers.constBegin(); it != markers.constEnd(); ++it)
     {
         const MarkerData &marker = it.value();
-        QPoint marker_pos(plot->xAxis->coordToPixel(marker.x), plot->yAxis->coordToPixel(marker.y));
+        QCPGraph *graph = plot->graph(marker.curve_index);
+        if (!graph || !graph->keyAxis()->axisRect()->rect().contains(pixel_pos))
+            continue;
+        QPointF marker_pos = graph->coordsToPixels(marker.x, marker.y);
         double distance = std::hypot(marker_pos.x() - pixel_pos.x(), marker_pos.y() - pixel_pos.y());
         if (distance < best_distance)
         {
@@ -1538,7 +1827,7 @@ void MainWindow::moveSelectedMarker(int key)
     }
     else if (key == Qt::Key_Up || key == Qt::Key_Down)
     {
-        double current_pixel_y = plot->yAxis->coordToPixel(marker.y);
+        double current_pixel_y = graph->valueAxis()->coordToPixel(marker.y);
         double best_delta = std::numeric_limits<double>::max();
 
         if (marker.type != MarkerType::Generic)
@@ -1555,7 +1844,7 @@ void MainWindow::moveSelectedMarker(int key)
                 continue;
 
             double candidate_y = candidate_graph->data()->at(candidate_index)->value;
-            double candidate_pixel_y = plot->yAxis->coordToPixel(candidate_y);
+            double candidate_pixel_y = candidate_graph->valueAxis()->coordToPixel(candidate_y);
             double delta = candidate_pixel_y - current_pixel_y;
             bool is_requested_direction = (key == Qt::Key_Up) ? delta < 0 : delta > 0;
             if (is_requested_direction && std::abs(delta) < best_delta)
@@ -1590,6 +1879,7 @@ void MainWindow::updateMarkerPosition(int marker_id, int curve_idx, int point_id
     marker.curve_index = curve_idx;
     marker.point_index = point_idx;
 
+    marker.point->setClipAxisRect(graph->keyAxis()->axisRect());
     marker.point->setGraph(graph);
     marker.point->setGraphKey(x);
     marker.point->position->setCoords(x, y);
@@ -1608,9 +1898,20 @@ void MainWindow::updateMarkerLabelPosition(int marker_id)
         return;
 
     MarkerData &marker = markers[marker_id];
-    double marker_x = plot->xAxis->coordToPixel(marker.x);
-    double marker_y = plot->yAxis->coordToPixel(marker.y);
-    marker.label->position->setCoords(marker_x - 10.0, marker_y - 10.0);
+    QCPGraph *graph = plot->graph(marker.curve_index);
+    if (!graph)
+        return;
+    const QRect bounds = graph->keyAxis()->axisRect()->rect();
+    const QPointF position = graph->coordsToPixels(marker.x, marker.y);
+    const double marker_x = position.x();
+    const double marker_y = position.y();
+    const bool visible = bounds.adjusted(-1, -1, 1, 1).contains(position.toPoint());
+    marker.point->setVisible(visible);
+    marker.label->setVisible(visible);
+    marker.label->position->setAxes(graph->keyAxis(), graph->valueAxis());
+    marker.label->position->setType(QCPItemPosition::ptPlotCoords);
+    marker.label->position->setCoords(graph->keyAxis()->pixelToCoord(marker_x - 10.0),
+                                      graph->valueAxis()->pixelToCoord(marker_y - 10.0));
 }
 
 void MainWindow::updateMarkerLabelPositions()
@@ -1639,19 +1940,25 @@ void MainWindow::updateMarkerVisual(int marker_id)
 double MainWindow::findNearestPointOnCurve(int curve_idx, QPoint pixel_pos, int &point_idx)
 {
     QCPGraph *graph = plot->graph(curve_idx);
-    if (!graph || graph->data()->size() == 0)
+    if (!graph || graph->data()->size() == 0 || !graph->keyAxis()->axisRect()->rect().contains(pixel_pos))
         return 1e10;
 
     double min_dist = 1e10;
     int best_idx = 0;
+    const bool target = isTargetGraph(graph);
+    const QRect bounds = graph->keyAxis()->axisRect()->rect().adjusted(-1, -1, 1, 1);
 
     for (int i = 0; i < graph->data()->size(); ++i)
     {
         double x = graph->data()->at(i)->key;
         double y = graph->data()->at(i)->value;
-        QPoint pt(plot->xAxis->coordToPixel(x), plot->yAxis->coordToPixel(y));
+        const QPointF pt = graph->coordsToPixels(x, y);
+        if (!std::isfinite(pt.x()) || !std::isfinite(pt.y()) ||
+            pt.x() < bounds.left() || pt.x() > bounds.right() ||
+            (!target && !bounds.contains(pt.toPoint())))
+            continue;
 
-        double dist = isTargetGraph(graph)
+        double dist = target
                           ? std::abs(pt.x() - pixel_pos.x())
                           : std::hypot(pt.x() - pixel_pos.x(), pt.y() - pixel_pos.y());
         if (dist < min_dist)

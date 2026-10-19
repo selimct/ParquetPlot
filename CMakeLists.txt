@@ -83,6 +83,24 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+option(PARQUETPLOT_BUILD_TESTS "Build plot interaction tests" OFF)
+if(PARQUETPLOT_BUILD_TESTS)
+    enable_testing()
+    find_package(Qt6 COMPONENTS Test REQUIRED)
+    add_executable(parquetplot_tests
+        tests/mainwindow_test.cpp
+        src/mainwindow.cpp src/mainwindow.h
+        src/parquet_reader.cpp src/parquet_reader.h)
+    target_include_directories(parquetplot_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(parquetplot_tests PRIVATE
+        Qt6::Test Qt6::Widgets Qt6::PrintSupport
+        Arrow::arrow_shared Parquet::parquet_shared ${QCUSTOMPLOT_TARGET})
+    add_test(NAME plot_panels COMMAND parquetplot_tests)
+    set_tests_properties(plot_panels PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 30)
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES resources/io.github.selimct.ParquetPlot.desktop

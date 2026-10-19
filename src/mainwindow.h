@@ -10,6 +10,7 @@
 #include <memory>
 #include <QMap>
 #include <QPoint>
+#include <QPair>
 #include <QStack>
 #include <QStringList>
 
@@ -21,6 +22,28 @@ class QCPGraph;
 class QCPItemLine;
 class QCPItemText;
 class QCPItemTracer;
+class QCPAxis;
+class QCPAxisRect;
+class QCPLegend;
+class QCPMarginGroup;
+
+struct PlotPanelSettings
+{
+    QString label = "Values";
+    bool logarithmic = false;
+    bool automatic_range = true;
+    double minimum = 0.0;
+    double maximum = 1.0;
+    double height = 1.0;
+};
+
+struct PlotSeriesSettings
+{
+    int panel = 0;
+    int style = 0; // Line, step, or points (signals only).
+    double multiplier = 1.0;
+    double offset = 0.0;
+};
 
 enum class InteractionMode
 {
@@ -40,7 +63,8 @@ enum class MarkerType
 
 struct ZoomState
 {
-    double x_min, x_max, y_min, y_max;
+    double x_min, x_max;
+    QList<QPair<double, double>> y_ranges;
 };
 
 struct MarkerData
@@ -57,6 +81,7 @@ struct MarkerData
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+    friend class MainWindowTest;
 
 public:
     MainWindow(QWidget *parent = nullptr);
@@ -102,6 +127,14 @@ private:
     QStringList signal_column_names = {"ecg1_raw", "puls_raw"};
     QStringList trigger_column_names = {"target"};
     QMap<QString, QColor> custom_plot_colors;
+    QList<PlotPanelSettings> panel_settings = {PlotPanelSettings{}};
+    QList<PlotSeriesSettings> signal_settings;
+    QList<PlotSeriesSettings> target_settings;
+    QList<QCPAxisRect *> panel_rects;
+    QList<QCPLegend *> panel_legends;
+    QCPMarginGroup *panel_margin_group = nullptr;
+    QCPAxisRect *active_panel = nullptr;
+    bool synchronizing_x = false;
 
     QPoint drag_start;
     QCPItemLine *selection_rect[4];
@@ -128,6 +161,12 @@ private:
     void setupToolbar();
     void selectColumnsForFile(const QString &filename, bool preserve_view);
     void setupPlot(const std::shared_ptr<ParquetData> &data, bool preserve_view);
+    void setupPanels();
+    void fitPanelRanges();
+    void synchronizeXRange(double lower, double upper);
+    QCPAxisRect *panelAt(QPoint position) const;
+    QCPAxis *activeYAxis() const;
+    void showSelection(QPoint current_pos, bool full_x, bool full_y);
     QColor automaticPlotColor(int series_index) const;
     QColor plotColor(bool target, int series_index) const;
     QString plotColorKey(bool target, int series_index) const;
