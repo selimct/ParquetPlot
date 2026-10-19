@@ -4,6 +4,8 @@
 #include "mainwindow.h"
 #include "parquet_reader.h"
 #include "qcustomplot.h"
+#include "table/TableBrowser.h"
+#include "table/FileTab.h"
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -39,6 +41,8 @@
 #include <QScrollArea>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QStackedWidget>
+#include <QMenu>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -104,19 +108,55 @@ void MainWindow::setupUI()
     plot_scroll->setWidgetResizable(true);
     plot_scroll->setFrameShape(QFrame::NoFrame);
     plot_scroll->setWidget(plot);
-    main_layout->addWidget(plot_scroll);
+    plot_page = plot_scroll;
+    view_stack = new QStackedWidget(central);
+    view_stack->addWidget(plot_page);
+    table_browser = new TableBrowser(central);
+    view_stack->addWidget(table_browser);
+    main_layout->addWidget(view_stack);
+    connect(table_browser, &TableBrowser::plotRequested, this, [this](const QString &path)
+    {
+        if (path == current_file_path && current_data)
+            showPlot();
+        else
+            selectColumnsForFile(path, false);
+    });
 
     central->setLayout(main_layout);
 }
 
 void MainWindow::setupToolbar()
 {
+    QToolBar *view_toolbar = addToolBar("Views");
+    view_toolbar->setObjectName("viewToolbar");
+    plot_action = view_toolbar->addAction("Plot", this, &MainWindow::showPlot);
+    plot_action->setObjectName("showPlot");
+    plot_action->setCheckable(true);
+    plot_action->setChecked(true);
+    table_action = new QAction("Table", this);
+    table_action->setObjectName("showTable");
+    table_action->setCheckable(true);
+    table_action->setToolTip("Show the table starting at the current plot X position");
+    connect(table_action, &QAction::triggered, this, [this]() { showTable(true); });
+    auto *table_menu = new QMenu(view_toolbar);
+    auto *from_plot = table_menu->addAction("From current plot X", this, [this]() { showTable(true); });
+    from_plot->setObjectName("tableFromPlot");
+    auto *from_start = table_menu->addAction("From beginning", this, [this]() { showTable(false); });
+    from_start->setObjectName("tableFromBeginning");
+    auto *table_button = new QToolButton(view_toolbar);
+    table_button->setObjectName("tableViewButton");
+    table_button->setDefaultAction(table_action);
+    table_button->setMenu(table_menu);
+    table_button->setPopupMode(QToolButton::MenuButtonPopup);
+    view_toolbar->addWidget(table_button);
+
     QToolBar *toolbar = addToolBar("Plot Controls");
+    plot_toolbar = toolbar;
     toolbar->setObjectName("plotToolbar");
     toolbar->setIconSize(QSize(16, 16));
 
     addToolBarBreak(Qt::TopToolBarArea);
-    QToolBar *annotation_toolbar = addToolBar("Annotations");
+    annotation_toolbar = addToolBar("Annotations");
     annotation_toolbar->setObjectName("annotationToolbar");
     annotation_toolbar->setAllowedAreas(Qt::TopToolBarArea);
     annotation_toolbar->setMovable(false);
@@ -166,6 +206,7 @@ void MainWindow::setupToolbar()
         connect(action, &QAction::triggered, this, [this, slot]()
                 { (this->*slot)(); });
         addAction(action);
+        plot_shortcuts.append(action);
     };
 
     // addWindowShortcut("Toggle X Zoom", QKeySequence("C"), &MainWindow::setXZoomMode);
@@ -540,6 +581,11 @@ void MainWindow::applyTargetHeight()
 
 void MainWindow::openFile()
 {
+    if (view_stack->currentWidget() == table_browser)
+    {
+        table_browser->openFile();
+        return;
+    }
     QSettings settings;
     QString last_directory = settings.value("files/lastParquetDirectory", QDir::homePath()).toString();
 
@@ -548,6 +594,76 @@ void MainWindow::openFile()
         return;
 
     openParquetFile(filename);
+}
+
+void MainWindow::showPlot()
+{
+    if (view_stack->currentWidget() == plot_page)
+        annotations_visible = !annotation_toolbar->isHidden();
+    view_stack->setCurrentWidget(plot_page);
+    plot_toolbar->show();
+    annotation_toolbar->setVisible(annotations_visible);
+    plot_action->setChecked(true);
+    table_action->setChecked(false);
+    select_columns_btn->setEnabled(current_data != nullptr);
+    for (QAction *action : plot_shortcuts)
+        action->setEnabled(true);
+    plot->setFocus();
+    plot->replot();
+}
+
+void MainWindow::showTable(bool from_current_x)
+{
+    FileTab *tab = nullptr;
+    qsizetype row = 0;
+    if (!current_file_path.isEmpty())
+    {
+        tab = table_browser->openFilePath(current_file_path);
+        if (!tab)
+        {
+            table_action->setChecked(view_stack->currentWidget() == table_browser);
+            return;
+        }
+        if (from_current_x && current_data)
+        {
+            const double left = plot->xAxis->range().lower;
+            double best_x = std::numeric_limits<double>::infinity();
+            double nearest_distance = std::numeric_limits<double>::infinity();
+            qsizetype nearest_row = 0;
+            bool found = false;
+            for (qsizetype i = 0; i < static_cast<qsizetype>(current_data->raw_idx.size()); ++i)
+            {
+                const double x = current_data->raw_idx[i];
+                if (!std::isfinite(x))
+                    continue;
+                if (std::abs(x - left) < nearest_distance)
+                {
+                    nearest_distance = std::abs(x - left);
+                    nearest_row = i;
+                }
+                if (x >= left && x < best_x)
+                {
+                    best_x = x;
+                    row = i;
+                    found = true;
+                }
+            }
+            if (!found)
+                row = nearest_row;
+        }
+    }
+    if (view_stack->currentWidget() == plot_page)
+        annotations_visible = !annotation_toolbar->isHidden();
+    view_stack->setCurrentWidget(table_browser);
+    plot_toolbar->hide();
+    annotation_toolbar->hide();
+    plot_action->setChecked(false);
+    table_action->setChecked(true);
+    select_columns_btn->setEnabled(false);
+    for (QAction *action : plot_shortcuts)
+        action->setEnabled(false);
+    if (tab)
+        tab->showFromRow(row);
 }
 
 void MainWindow::openParquetFile(const QString &filename)
@@ -560,6 +676,12 @@ void MainWindow::openParquetFile(const QString &filename)
     settings.setValue("files/lastParquetDirectory", QFileInfo(absolute_filename).absolutePath());
 
     selectColumnsForFile(absolute_filename, false);
+}
+
+void MainWindow::openTableFiles(const QStringList &filenames)
+{
+    showTable(false);
+    table_browser->openFiles(filenames);
 }
 
 void MainWindow::reopenColumnDialog()
@@ -1008,6 +1130,7 @@ void MainWindow::selectColumnsForFile(const QString &filename, bool preserve_vie
         current_file_path = filename;
         filename_label->setText(QString("File: %1").arg(QFileInfo(filename).fileName()));
         select_columns_btn->setEnabled(true);
+        showPlot();
     }
     catch (const std::exception &e)
     {
@@ -1377,7 +1500,18 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == plot)
     {
-        if (event->type() == QEvent::Wheel)
+        if (event->type() == QEvent::KeyPress)
+        {
+            auto *key = static_cast<QKeyEvent *>(event);
+            if (key->key() == Qt::Key_Left || key->key() == Qt::Key_Right ||
+                key->key() == Qt::Key_Up || key->key() == Qt::Key_Down)
+            {
+                // Handle plot navigation before the surrounding scroll area consumes it.
+                keyPressEvent(key);
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::Wheel)
         {
             auto *wheel = static_cast<QWheelEvent *>(event);
             if (QCPAxisRect *rect = panelAt(wheel->position().toPoint()))
@@ -1407,6 +1541,11 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
+    if (view_stack->currentWidget() != plot_page)
+    {
+        QMainWindow::keyPressEvent(event);
+        return;
+    }
     if (!plot)
         return;
 

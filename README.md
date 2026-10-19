@@ -1,6 +1,6 @@
 # ParquetPlot
 
-Desktop application for visualizing and annotating Parquet signal data on Linux and Windows.
+Desktop application for plotting, annotating, and browsing Parquet data on Linux and Windows.
 
 ## Features
 
@@ -9,6 +9,9 @@ Desktop application for visualizing and annotating Parquet signal data on Linux 
 - Stacked plot panels with a shared X-axis and independent Y-axis scaling
 - Per-column panel assignment, line/step/point styles, multipliers, and offsets
 - Zoom, pan, hover coordinates, and marker annotations
+- Integrated ParquetViewer table browser with a file explorer and multiple file tabs
+- Paged or all-rows tables, global search, quick filters, and a visual filter builder
+- Switch from a plot to the table at the beginning or at the current X position
 - Smooth handling of files with up to 350k rows
 
 ## Installation
@@ -46,6 +49,9 @@ Files can also be opened from a terminal:
 
 ```bash
 ./build/ParquetPlot example.parquet
+# Open directly as a table, or open multiple files in table tabs:
+./build/ParquetPlot --table example.parquet
+./build/ParquetPlot first.parquet second.parquet
 ```
 
 ## Build from source
@@ -55,6 +61,10 @@ Requirements:
 - Qt 6
 - Apache Arrow C++
 - Parquet C++
+- DuckDB CLI (`duckdb` in `PATH`, or set `-DDUCKDB_EXECUTABLE=/path/to/duckdb`)
+
+The table browser uses the DuckDB CLI for Parquet queries. Source installation
+copies it beside ParquetPlot; release packages include it and its license.
 
 QCustomPlot 2.1.1 is downloaded and checksum-verified during configuration.
 For an offline build, install QCustomPlot and use
@@ -103,6 +113,35 @@ FP/FN markers, marker export, Parquet saving, and target-height controls share
 an annotation toolbar row. Click **Annotations** in the plot toolbar to collapse
 or expand it. The regular **Add Marker** tool stays in the plot toolbar.
 
+### Table view
+
+Click **Table** in the toolbar to see the current file as a table, starting at
+the left edge of the plot's current X range. Use the arrow beside **Table** to
+choose **From beginning** or **From current plot X** explicitly. Click **Plot**
+to return to the same zoom, panel ranges, and annotations.
+
+The X jump uses the selected X column and opens at the row with the smallest X
+value at or after the plot's left edge. If the view is beyond the data, it uses
+the nearest X value. The table keeps source row order and shows all columns and
+subsequent rows. Jumping from the plot or choosing **From beginning** clears
+table search and filters so they cannot hide the requested row. The table shows
+the source file; unsaved FP/FN annotations are applied only when saving an edited
+Parquet copy.
+
+The integrated ParquetViewer includes its file/folder explorer and multiple
+closable file tabs. Open additional `.parquet` or `.parq` files from the table
+toolbar or explorer. **Plot this file** opens the active table file in the plot
+column picker. You can use the table browser before loading a plot, including
+for files that contain only text or other nonnumeric columns.
+
+Use the page arrows and **Rows** control to navigate; enter `-1` to show every
+matching row. **Find** searches across all columns with **contains** or **exact**
+matching, or accepts quick filters such as `target = 1`, `score > 10`, and
+`active = true`. Press Enter to apply the search. **Add Filter** provides column,
+operator, and value controls for numeric comparisons, text matching, booleans,
+and empty values. Multiple filters are combined with AND; use **Apply** to run
+them or **Clear** to remove them.
+
 ### Stacked plots
 
 In **Select Columns**, increase **Stacked panels** and assign each signal or
@@ -126,7 +165,7 @@ panel. **Fit** restores automatic Y ranges or the configured fixed bounds;
 **Undo** restores the shared X range and all panel Y ranges. Applying column
 settings recalculates Y ranges and clears markers and zoom history.
 
-To run the plot interaction tests:
+To run the plot and table interaction tests:
 
 ```bash
 cmake -S . -B build -DPARQUETPLOT_BUILD_TESTS=ON

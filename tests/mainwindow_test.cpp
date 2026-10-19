@@ -8,7 +8,11 @@
 #include "mainwindow.h"
 #include "parquet_reader.h"
 #include "qcustomplot.h"
+#include "table/TableBrowser.h"
+#include "table/FileTab.h"
+#include "table/FilterBuilderWidget.h"
 #include <QtTest>
+#include <QAction>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -20,6 +24,11 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QStackedWidget>
+#include <QTableView>
+#include <QTabWidget>
+#include <QToolBar>
+#include <QTreeView>
 class MainWindowTest : public QObject
 {
     Q_OBJECT
@@ -45,6 +54,55 @@ class MainWindowTest : public QObject
         window.show();
         QApplication::processEvents();
         window.plot->replot();
+    }
+
+    static bool writeTableFixture(const QString &filename)
+    {
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+        for (const std::vector<double> &values : {std::vector<double>{100, 130, 110, 150, 180},
+                 std::vector<double>{-1000, 0, 1200, 500, -300},
+                 std::vector<double>{0.1, 0.2, 0.4, 0.8, 0.3},
+                 std::vector<double>{0, 1, 0, 1, 0}})
+        {
+            arrow::DoubleBuilder builder;
+            if (!builder.AppendValues(values).ok())
+                return false;
+            auto result = builder.Finish();
+            if (!result.ok())
+                return false;
+            arrays.push_back(*result);
+        }
+        arrow::StringBuilder names;
+        if (!names.AppendValues({"Alpha", "beta", "gamma_100%", "O'Brien", ""}).ok())
+            return false;
+        auto name_array = names.Finish();
+        if (!name_array.ok())
+            return false;
+        arrays.push_back(*name_array);
+        arrow::BooleanBuilder active;
+        if (!active.Append(true).ok() || !active.Append(false).ok() || !active.AppendNull().ok() ||
+            !active.Append(true).ok() || !active.Append(false).ok())
+            return false;
+        auto active_array = active.Finish();
+        if (!active_array.ok())
+            return false;
+        arrays.push_back(*active_array);
+        arrow::Int64Builder identifiers;
+        if (!identifiers.AppendValues({9007199254740993LL, 2, 3, 4, 5}).ok())
+            return false;
+        auto identifier_array = identifiers.Finish();
+        if (!identifier_array.ok())
+            return false;
+        arrays.push_back(*identifier_array);
+        const auto schema = arrow::schema({arrow::field("sample_x", arrow::float64()),
+            arrow::field("ECG", arrow::float64()), arrow::field("Score", arrow::float64()),
+            arrow::field("Trigger", arrow::float64()), arrow::field("name", arrow::utf8()),
+            arrow::field("active", arrow::boolean()), arrow::field("id", arrow::int64())});
+        auto output = arrow::io::FileOutputStream::Open(filename.toStdString());
+        if (!output.ok())
+            return false;
+        return parquet::arrow::WriteTable(*arrow::Table::Make(schema, arrays),
+            arrow::default_memory_pool(), *output, 2).ok() && (*output)->Close().ok();
     }
 
 private slots:
@@ -111,6 +169,212 @@ private slots:
         window.panel_settings[1].maximum = 10;
         window.fitView();
         QCOMPARE(score_axis->range(), QCPRange(0.01, 10));
+    }
+
+    void keyboardPanning()
+    {
+        MainWindow window;
+        populate(window);
+        const QCPRange top_y = window.plot->yAxis->range();
+        auto *bottom = window.panel_rects[1];
+        const QCPRange bottom_y = bottom->axis(QCPAxis::atLeft)->range();
+        QTest::mouseClick(window.plot, Qt::LeftButton, Qt::NoModifier, bottom->rect().center());
+
+        QTest::keyClick(window.plot, Qt::Key_Right);
+        QCOMPARE(window.plot->xAxis->range(), QCPRange(0.4, 4.4));
+        QCOMPARE(bottom->axis(QCPAxis::atBottom)->range(), QCPRange(0.4, 4.4));
+        QTest::keyClick(window.plot, Qt::Key_Left);
+        QCOMPARE(window.plot->xAxis->range(), QCPRange(0, 4));
+        QCOMPARE(bottom->axis(QCPAxis::atBottom)->range(), QCPRange(0, 4));
+        QCOMPARE(window.plot->yAxis->range(), top_y);
+        QCOMPARE(bottom->axis(QCPAxis::atLeft)->range(), bottom_y);
+
+        auto *score = window.plot->graph(1);
+        window.addMarkerAtCurve(score->coordsToPixels(2, 0.4).toPoint());
+        QTest::keyClick(window.plot, Qt::Key_Right);
+        QCOMPARE(window.markers.first().x, 3.0);
+        QTest::keyClick(window.plot, Qt::Key_Left);
+        QCOMPARE(window.markers.first().x, 2.0);
+        QCOMPARE(window.plot->xAxis->range(), QCPRange(0, 4));
+    }
+
+    void tableSwitchingFromPlot()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString filename = directory.filePath("plot's data.parquet");
+        QVERIFY(writeTableFixture(filename));
+        MainWindow window;
+        populate(window);
+        window.current_file_path = filename;
+        window.x_column_name = "sample_x";
+        window.current_data->raw_idx = {100, 130, 110, 150, 180};
+        window.setupPlot(window.current_data, false);
+        window.synchronizeXRange(109, 145);
+        window.addMarkerAtCurve(window.plot->graph(0)->coordsToPixels(130, 0).toPoint());
+        QCOMPARE(window.markers.size(), 1);
+        window.saveZoomState();
+        const auto history_size = window.zoom_history.size();
+        const QCPRange top_y = window.plot->yAxis->range();
+        window.annotation_toolbar->hide();
+        window.table_action->trigger();
+        QCOMPARE(window.view_stack->currentWidget(), window.table_browser);
+        QVERIFY(window.plot_toolbar->isHidden());
+        auto *tabs = window.table_browser->findChild<QTabWidget *>();
+        QCOMPARE(tabs->count(), 1);
+        auto *table = tabs->currentWidget()->findChild<QTableView *>();
+        QVERIFY(table);
+        auto *model = table->model();
+        QCOMPARE(model->columnCount(), 7);
+        // X is neither a row number nor sorted in source order. Start at X=110, source row 3.
+        QCOMPARE(model->rowCount(), 3);
+        QCOMPARE(model->data(model->index(0, 0)).toDouble(), 110.0);
+        QCOMPARE(model->headerData(0, Qt::Vertical).toInt(), 3);
+        const QString screenshot = qEnvironmentVariable("PARQUETPLOT_TEST_SCREENSHOT");
+        if (!screenshot.isEmpty())
+        {
+            QApplication::processEvents();
+            QVERIFY(window.grab().save(screenshot + ".table.png"));
+        }
+        QTest::keyClick(table, Qt::Key_Right);
+        QCOMPARE(window.plot->xAxis->range(), QCPRange(109, 145));
+        window.plot_action->trigger();
+        QCOMPARE(window.view_stack->currentWidget(), window.plot_page);
+        QVERIFY(!window.plot_toolbar->isHidden());
+        QVERIFY(window.annotation_toolbar->isHidden());
+        QCOMPARE(window.plot->xAxis->range(), QCPRange(109, 145));
+        QCOMPARE(window.plot->yAxis->range(), top_y);
+        QCOMPARE(window.markers.size(), 1);
+        QCOMPARE(window.zoom_history.size(), history_size);
+
+        window.findChild<QAction *>("tableFromBeginning")->trigger();
+        QCOMPARE(tabs->count(), 1);
+        QCOMPARE(model->rowCount(), 5);
+        QCOMPARE(model->data(model->index(0, 0)).toDouble(), 100.0);
+        QCOMPARE(model->data(model->index(0, 6)).toString(), "9007199254740993");
+        QCOMPARE(model->headerData(0, Qt::Vertical).toInt(), 1);
+        auto *search = tabs->currentWidget()->findChild<QLineEdit *>("tableSearch");
+        search->setText("Trigger = 1");
+        QTest::keyClick(search, Qt::Key_Return);
+        QCOMPARE(model->rowCount(), 2);
+        window.showTable(true);
+        QCOMPARE(model->rowCount(), 3);
+        QVERIFY(search->text().isEmpty());
+
+        window.showPlot();
+        window.synchronizeXRange(200, 220);
+        window.showTable(true);
+        QCOMPARE(model->rowCount(), 1);
+        QCOMPARE(model->data(model->index(0, 0)).toDouble(), 180.0);
+        window.showPlot();
+        window.synchronizeXRange(0, 20);
+        window.showTable(true);
+        QCOMPARE(model->rowCount(), 5);
+        QCOMPARE(model->data(model->index(0, 0)).toDouble(), 100.0);
+    }
+
+    void tablePagingSearchAndFilters()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString filename = directory.filePath("table.parquet");
+        QVERIFY(writeTableFixture(filename));
+        FileTab tab(filename);
+        QString error;
+        QVERIFY2(tab.load(&error), qPrintable(error));
+        auto *table = tab.findChild<QTableView *>();
+        auto *model = table->model();
+        auto *page_size = tab.findChild<QSpinBox *>("tablePageSize");
+        auto *next = tab.findChild<QPushButton *>("nextPage");
+        auto *previous = tab.findChild<QPushButton *>("previousPage");
+        auto *search = tab.findChild<QLineEdit *>("tableSearch");
+        page_size->setValue(2);
+        QCOMPARE(model->rowCount(), 2);
+        QVERIFY(!previous->isEnabled());
+        next->click();
+        QCOMPARE(model->headerData(0, Qt::Vertical).toInt(), 3);
+        next->click();
+        QCOMPARE(model->rowCount(), 1);
+        QVERIFY(!next->isEnabled());
+        previous->click();
+        QCOMPARE(model->headerData(0, Qt::Vertical).toInt(), 3);
+
+        page_size->setValue(-1);
+        QCOMPARE(model->rowCount(), 5);
+        QVERIFY(!next->isEnabled());
+        QVERIFY(!previous->isEnabled());
+        QVERIFY(tab.showFromRow(3));
+        QCOMPARE(table->currentIndex().row(), 3);
+        const auto find = [&](const QString &value)
+        {
+            search->setText(value);
+            QTest::keyClick(search, Qt::Key_Return);
+        };
+        find("Trigger = 1");
+        QCOMPARE(model->rowCount(), 2);
+        find("active = true");
+        QCOMPARE(model->rowCount(), 2);
+        find("name = O'Brien");
+        QCOMPARE(model->rowCount(), 1);
+        QCOMPARE(model->data(model->index(0, 4)).toString(), "O'Brien");
+        find("100%");
+        QCOMPARE(model->rowCount(), 1);
+        find("NO_MATCH");
+        QCOMPARE(model->rowCount(), 0);
+        find("alpha");
+        QCOMPARE(model->rowCount(), 1);
+        auto *search_mode = tab.findChild<QComboBox *>("tableSearchMode");
+        search_mode->setCurrentText("exact");
+        QCOMPARE(model->rowCount(), 0);
+        find("Alpha");
+        QCOMPARE(model->rowCount(), 1);
+        find("");
+
+        auto *filters = tab.findChild<FilterBuilderWidget *>();
+        auto *add = filters->findChildren<QPushButton *>().first();
+        add->click();
+        const auto combos = filters->findChildren<QComboBox *>();
+        QCOMPARE(combos.size(), 2);
+        combos[0]->setCurrentText("sample_x");
+        combos[1]->setCurrentText("at least");
+        filters->findChild<QLineEdit *>()->setText("140");
+        QVERIFY(QMetaObject::invokeMethod(filters, "filtersApplied"));
+        QCOMPARE(model->rowCount(), 2);
+        QVERIFY(tab.showFromRow(0));
+        QCOMPARE(model->rowCount(), 5);
+        QVERIFY(filters->conditions().isEmpty());
+    }
+
+    void tableBrowserTabs()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString first = directory.filePath("first.parquet");
+        const QString second = directory.filePath("second.parq");
+        QVERIFY(writeTableFixture(first));
+        QVERIFY(QFile::copy(first, second));
+        MainWindow window;
+        window.show();
+        window.openTableFiles({first, second, first});
+        QCOMPARE(window.view_stack->currentWidget(), window.table_browser);
+        QVERIFY(window.table_browser->findChild<QTreeView *>());
+        auto *tabs = window.table_browser->findChild<QTabWidget *>();
+        QCOMPARE(tabs->count(), 2);
+        QCOMPARE(qobject_cast<FileTab *>(tabs->currentWidget())->filePath(), first);
+        QSignalSpy plot_requested(window.table_browser, &TableBrowser::plotRequested);
+        // A different table file can be sent to the plot column picker.
+        QTimer::singleShot(0, []()
+        {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            dialog->reject();
+        });
+        window.table_browser->findChild<QAction *>("plotTableFile")->trigger();
+        QCOMPARE(plot_requested.size(), 1);
+        QCOMPARE(plot_requested.first().first().toString(), first);
+        QCOMPARE(window.view_stack->currentWidget(), window.table_browser);
+        QVERIFY(QMetaObject::invokeMethod(tabs, "tabCloseRequested", Q_ARG(int, 0)));
+        QCOMPARE(tabs->count(), 1);
     }
 
     void lowerPanelInteractions()

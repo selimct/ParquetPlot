@@ -13,6 +13,21 @@ set(CMAKE_AUTOUIC ON)
 find_package(Qt6 COMPONENTS Core Gui Widgets PrintSupport REQUIRED)
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
+find_program(DUCKDB_EXECUTABLE duckdb)
+if(NOT DUCKDB_EXECUTABLE)
+    message(FATAL_ERROR "DuckDB CLI is required for table browsing. Install duckdb or set -DDUCKDB_EXECUTABLE=/path/to/duckdb.")
+endif()
+
+add_library(parquetplot_table STATIC
+    src/table/TableBrowser.cpp src/table/TableBrowser.h
+    src/table/FileTab.cpp src/table/FileTab.h
+    src/table/FilterBuilderWidget.cpp src/table/FilterBuilderWidget.h
+    src/table/FilterCondition.h
+    src/table/ParquetDocument.cpp src/table/ParquetDocument.h
+    src/table/ParquetTableModel.cpp src/table/ParquetTableModel.h)
+target_link_libraries(parquetplot_table PUBLIC Qt6::Widgets)
+target_compile_definitions(parquetplot_table PRIVATE
+    DUCKDB_EXECUTABLE="${DUCKDB_EXECUTABLE}")
 
 # QCustomPlot is not consistently packaged by Linux distributions and is not
 # normally present on Windows. Download a pinned, checksum-verified source
@@ -73,6 +88,7 @@ add_executable(${PROJECT_NAME} WIN32
     src/parquet_reader.h)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    parquetplot_table
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -93,6 +109,7 @@ if(PARQUETPLOT_BUILD_TESTS)
         src/parquet_reader.cpp src/parquet_reader.h)
     target_include_directories(parquetplot_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(parquetplot_tests PRIVATE
+        parquetplot_table
         Qt6::Test Qt6::Widgets Qt6::PrintSupport
         Arrow::arrow_shared Parquet::parquet_shared ${QCUSTOMPLOT_TARGET})
     add_test(NAME plot_panels COMMAND parquetplot_tests)
@@ -103,6 +120,8 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS "${DUCKDB_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME "duckdb${CMAKE_EXECUTABLE_SUFFIX}")
 install(FILES resources/io.github.selimct.ParquetPlot.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES resources/io.github.selimct.ParquetPlot-mime.xml

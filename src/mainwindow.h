@@ -26,6 +26,10 @@ class QCPAxis;
 class QCPAxisRect;
 class QCPLegend;
 class QCPMarginGroup;
+class QStackedWidget;
+class QToolBar;
+class QAction;
+class TableBrowser;
 
 struct PlotPanelSettings
 {
@@ -87,6 +91,7 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
     void openParquetFile(const QString &filename);
+    void openTableFiles(const QStringList &filenames);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -94,6 +99,7 @@ protected:
 
 private slots:
     void openFile();
+    void showPlot();
     void reopenColumnDialog();
     void setBoxZoomMode();
     void setXZoomMode();
@@ -112,6 +118,15 @@ private slots:
 
 private:
     QCustomPlot *plot;
+    QStackedWidget *view_stack;
+    QWidget *plot_page;
+    TableBrowser *table_browser;
+    QToolBar *plot_toolbar;
+    QToolBar *annotation_toolbar;
+    QAction *plot_action;
+    QAction *table_action;
+    QList<QAction *> plot_shortcuts;
+    bool annotations_visible = true;
     std::shared_ptr<ParquetData> current_data;
     InteractionMode current_mode = InteractionMode::Normal;
 
@@ -159,6 +174,7 @@ private:
 
     void setupUI();
     void setupToolbar();
+    void showTable(bool from_current_x);
     void selectColumnsForFile(const QString &filename, bool preserve_view);
     void setupPlot(const std::shared_ptr<ParquetData> &data, bool preserve_view);
     void setupPanels();
