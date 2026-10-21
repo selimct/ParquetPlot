@@ -197,6 +197,10 @@ Any numeric columns can be selected. These names are preselected when present:
 
 Target values equal to `1` are displayed as vertical lines.
 
+## Notice
+
+This Software has contributions by OpenAI's Codex.
+
 ## License
 
 ParquetPlot is licensed under the GNU General Public License v3.0 only.
@@ -204,3 +208,4 @@ See [LICENSE](LICENSE) for the full license text.
 
 Bundled dependency licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
