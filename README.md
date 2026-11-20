@@ -5,7 +5,6 @@ Desktop application for plotting, annotating, and browsing Parquet data on Linux
 Part of the ECG - POX Cardiac Trigger for UHF MRI:
 
 [![Source Code](https://raw.githubusercontent.com/selimct/DKFZ-MRI-Cardiac-Trigger-GUI/refs/heads/main/packaging/source-badge.svg)](https://github.com/selimct/Cetin-Cardiac-Trigger-SourceCode.git)
-[![ECG/POX Data](https://raw.githubusercontent.com/selimct/DKFZ-MRI-Cardiac-Trigger-GUI/refs/heads/main/packaging/data-badge.svg)](https://github.com/selimct/Cetin-UHF-ECGPOX-Data.git)
 [![Trigger GUI](https://raw.githubusercontent.com/selimct/DKFZ-MRI-Cardiac-Trigger-GUI/refs/heads/main/packaging/github-badge.svg)](https://github.com/selimct/DKFZ-MRI-Cardiac-Trigger-GUI)
 
 ## Features
